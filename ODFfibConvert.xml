@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<executable>
+  <title>ODF fib Convert</title>
+  <description>Conversion ITK/fib. Give either an ODF image in itk format or fib format, if both are given the conversion ITK to fib will be done.</description>
+  <contributor>Adrien Kaiser</contributor>
+  <version>1.0</version>
+  <parameters>
+    <label>Inputs</label>
+    <description>Inputs for the program</description>
+    <image>
+      <name>ODFitk</name>
+      <longflag>ODFitk</longflag>
+      <description>ODF image in itk format (.nrrd, .nii, .nii.gz)</description>
+      <label>ODF itk Image</label>
+    </image>
+    <image>
+      <name>ODFfib</name>
+      <longflag>ODFfib</longflag>
+      <description>ODF image in fib format (.fib, .fib.gz)</description>
+      <label>ODF fib Image</label>
+    </image>
+  </parameters>
+  <parameters>
+    <label>Outputs</label>
+    <description>Outputs for the program</description>
+    <image>
+      <name>outputODF</name>
+      <longflag>outputODF</longflag>
+      <description>Output ODF image in ITK or fib format</description>
+      <label>Output ODF image</label>
+    </image>
+  </parameters>
+</executable>
+      
