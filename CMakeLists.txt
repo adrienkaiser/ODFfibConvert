@@ -1,25 +1,27 @@
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
+cmake_minimum_required(VERSION 2.8)
 
-PROJECT(ODFfibConvert)
+project(ODFfibConvert)
 
-FIND_PACKAGE(ITK REQUIRED)
+find_package(ITK REQUIRED)
 IF(ITK_FOUND)
-  INCLUDE(${ITK_USE_FILE})
+  include(${ITK_USE_FILE})
 ELSE(ITK_FOUND)
-  MESSAGE(FATAL_ERROR "ITK not found. Please set ITK_DIR")
+  message(FATAL_ERROR "ITK not found. Please set ITK_DIR")
 ENDIF(ITK_FOUND)
 
-FIND_PACKAGE(GenerateCLP REQUIRED)
+find_package(GenerateCLP REQUIRED)
 IF(GenerateCLP_FOUND)
-  INCLUDE(${GenerateCLP_USE_FILE})
+  include(${GenerateCLP_USE_FILE})
 ELSE(GenerateCLP_FOUND)
-  MESSAGE(FATAL_ERROR "GenerateCLP not found. Please set GenerateCLP_DIR")
+  message(FATAL_ERROR "GenerateCLP not found. Please set GenerateCLP_DIR")
 ENDIF(GenerateCLP_FOUND)
 
-SET(sources ODFfibConvert.cpp zconf.h zlib.h)
+configure_file( ODFfibConvert.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/ODFfibConvert.cpp )  # for the location of datFile & FacesFile
+include_directories( ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} ) # So the main cpp finds the headers
+set( sources ${CMAKE_CURRENT_BINARY_DIR}/ODFfibConvert.cpp zconf.h zlib.h ODFReconstructor.h ODFReconstructor.cxx )
 
 GENERATECLP(sources ODFfibConvert.xml)
 
-ADD_EXECUTABLE(ODFfibConvert ${sources})
+add_executable(ODFfibConvert ${sources})
 
-TARGET_LINK_LIBRARIES(ODFfibConvert ${ITK_LIBRARIES} z) # add z library
+target_link_libraries(ODFfibConvert ${ITK_LIBRARIES} z) # add z library (zlib.h) to open gz files
