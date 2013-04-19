@@ -52,9 +52,12 @@ std::string FacesFile = "${CMAKE_CURRENT_SOURCE_DIR}/ODFFaces.dat";
  //           MAT MATRIX CLASS          //
 /////////////////////////////////////////
 
+// dsistudio/libs/mat_file.hpp:62:  class MatMatrix
+// dsistudio/libs/mat_file.hpp:306: class MatFile
 class MatMatrix
 {
 public:
+  // Data
   std::string name;
   unsigned int type;
   unsigned int rows;
@@ -64,6 +67,19 @@ public:
   std::vector<char> data_buf;
   char* data_ptr;
 
+  MatMatrix(void):type(0),rows(0),cols(0),data_ptr(0) {}
+  MatMatrix(const std::string& name_):namelen(name_.size()+1),name(name_),data_ptr(0) {}
+
+  template<class T> void assign(const T* data_ptr_,unsigned int rows_,unsigned int cols_,unsigned int type_)
+  {
+    data_ptr = (char*)data_ptr_;
+    rows = rows_;
+    cols = cols_;
+    type = type_;
+    count = rows * cols ;
+  }
+
+  // FIB -> ITK
   bool readMat(void* in)
   { 
     unsigned int imagf = 0; // content useless but variable necessary
@@ -84,7 +100,7 @@ public:
     try
     {
       std::vector<char> allocator(total_size);
-      allocator.swap(data_buf); // swap ??
+      allocator.swap(data_buf); // swap ?? => allocate memory ??
     }
     catch (...)
     {
@@ -95,16 +111,17 @@ public:
     return gzread(in,(char*)data_ptr,total_size) != -1;
   }
 
+  // ITK -> FIB
   bool writeMat(void* out)
   {
     unsigned int imagf = 0;
-    gzwrite(out,(const char*)&type,4);
-    gzwrite(out,(const char*)&rows,4);
-    gzwrite(out,(const char*)&cols,4);
-    gzwrite(out,(const char*)&imagf,4);
-    gzwrite(out,(const char*)&namelen,4);
-    gzwrite(out,(const char*)&*name.begin(),namelen);
-    gzwrite(out,(const char*)data_ptr,rows*cols*element_size_array[(type%100)/10]);
+    gzwrite( out, (const char*)&type, 4 );
+    gzwrite( out, (const char*)&rows, 4 );
+    gzwrite( out, (const char*)&cols, 4 );
+    gzwrite( out, (const char*)&imagf, 4 );
+    gzwrite( out, (const char*)&namelen, 4 );
+    gzwrite( out, (const char*)&*name.begin(), namelen );
+    gzwrite( out, (const char*)data_ptr, rows*cols*element_size_array[(type%100)/10] );
 
     return true;
   }
@@ -112,55 +129,19 @@ public:
 }; // class MatMatrix
 
   /////////////////////////////////////////
- //                 FIB                 //
+ //            ITK -> FIB               //
 /////////////////////////////////////////
-
-std::vector<MatMatrix*> loadFib(std::string filename)
-{
-  std::vector<MatMatrix*> ImageMatrices;
-  std::vector<MatMatrix*> EmptyVector; // EXIT_FAILURE
-
-  std::cout<<"Status : Loading fib file: "<<filename<<"... ";
-
-  void* in = gzopen(filename.c_str(), "rb");
-  if (!in)
-  {
-     std::cout<<"Error  : gzopen failed"<<std::endl;
-     return EmptyVector;
-  }
-
-  for(unsigned int index = 0 ; !gzeof(in) ; ++index)
-  {
-    MatMatrix * matrix= new MatMatrix;
-
-    if(!matrix->readMat(in))
-    {
-      std::cout<<"Error  : read matrix failed"<<std::endl;
-      return EmptyVector;
-    }
-
-    ImageMatrices.push_back(matrix);
-
-  } // for()
-
-  gzclose(in);
-
-  std::cout<<"DONE"<<std::endl;
-
-  return ImageMatrices;
-
-} // std::vector<MatMatrix*> loadFib()
 
 bool writeOutFibFile(std::vector<MatMatrix*> ImageMatrices, std::string filename)
 {
-  std::cout<<"Status : Writing out fib ODF image: " << filename << "... ";
+  std::cout<<"Status : Writing out fib ODF image: " << filename << " ... ";
 
   // Open gz file for writing
   void* out = gzopen(filename.c_str(), "wb");
 
   for(unsigned int i=0; i<ImageMatrices.size(); ++i)
   {
-    std::cout<<"======== MAT ================================="<<std::endl;
+/*    std::cout<<"======== MAT ================================="<<std::endl;
     std::cout<<"type\trows\tcols\tnamelen\tcount\tname"<<std::endl;
     std::cout<<ImageMatrices[i]->type<<"\t";
     std::cout<<ImageMatrices[i]->rows<<"\t";
@@ -168,7 +149,7 @@ bool writeOutFibFile(std::vector<MatMatrix*> ImageMatrices, std::string filename
     std::cout<<ImageMatrices[i]->namelen<<"\t";
     std::cout<<ImageMatrices[i]->count<<"\t";
     std::cout<<ImageMatrices[i]->name<<"\t"<<std::endl;
-
+*/
 
     if( !ImageMatrices[i]->writeMat(out) )
     {
@@ -185,17 +166,12 @@ bool writeOutFibFile(std::vector<MatMatrix*> ImageMatrices, std::string filename
 }
 
 // Create a MatMatrix with all infos from data array
-template< class T > MatMatrix* GetMatMatrixFromData (T* data, int Mrows, int Mcols, int Mtype, std::string MName )
+// Function = equivalent of void MatFile::add_matrix() called by void OutputODF::end() with &*data to be const ??
+template< class T > MatMatrix* GetMatMatrixFromData (const T* data, unsigned int Mrows, unsigned int Mcols, unsigned int Mtype, const char* MName )
 {
-  MatMatrix* matrix = new MatMatrix;
+  MatMatrix* matrix(new MatMatrix(MName));
 
-  matrix->type = (unsigned int)Mtype;
-  matrix->name = MName;
-  matrix->rows = (unsigned int)Mrows;
-  matrix->cols = (unsigned int)Mcols;
-  matrix->count = (unsigned int)(Mrows*Mcols);
-  matrix->namelen = MName.length();
-  matrix->data_ptr = (char*)data;
+  matrix -> assign< T >(data, Mrows, Mcols, Mtype);
 
   return matrix;
 }
@@ -254,7 +230,7 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib)
   std::vector<MatMatrix*> ImageMatrices;
 
   // Reconstruct ODF: convert sph. harm. coeffs to ODF value by vertex by sampling coeffs on vertices
-  std::cout<<"Status : Reconstructing ODF (can take some time)... ";
+  std::cout<<"Status : Reconstructing ODF (can take some time) ... ";
 
   typedef itk::Image < double, 3 > FAImageType ;
   ODFImageType::Pointer ODFSampledImage = ODFImageType::New();
@@ -274,14 +250,14 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib)
   // Spacing
   ODFImageType::SpacingType spacing = ODFSampledImage->GetSpacing();
   float spacingArray[3] = {spacing[0], spacing[1], spacing[2]}; // SpacingValueType = double  -> float
-  ImageMatrices.push_back( GetMatMatrixFromData< float >(spacingArray, 1, 3, FLOAT, "voxel_size") );
+  ImageMatrices.push_back( GetMatMatrixFromData< float >( spacingArray, 1, 3, FLOAT, "voxel_size") );
 
 //  ODFImageType::PointType     origin    = ODFSampledImage->GetOrigin();
 //  ODFImageType::DirectionType direction = ODFSampledImage->GetDirection();
 
   // odf_vertices
-  float* VerticesArray = GetArrayFromFile< float >(datFile, true);
-  ImageMatrices.push_back( GetMatMatrixFromData< float >( VerticesArray, 3, NbDirs, FLOAT, "odf_vertices") );
+  double* VerticesArray = GetArrayFromFile< double >(datFile, true);
+  ImageMatrices.push_back( GetMatMatrixFromData< double >( VerticesArray, 3, NbDirs, DOUBLE, "odf_vertices") );
   delete []VerticesArray;
 
   // odf_faces
@@ -291,19 +267,19 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib)
 
   // FA
   double *FAArray = FAImage->GetPixelContainer()->GetBufferPointer();
-  ImageMatrices.push_back( GetMatMatrixFromData< double >(FAArray, 1, size[0]*size[1]*size[2], DOUBLE, "gfa") );
+  ImageMatrices.push_back( GetMatMatrixFromData< double >( FAArray, 1, size[0]*size[1]*size[2], DOUBLE, "gfa") );
 
   // Read ODF array and fill vector with matrices to be written out
-  std::cout<<"Status : Converting ODF data... ";
+  std::cout<<"Status : Converting ODF data ... ";
   float* ODFArray = ODFSampledImage->GetPixelContainer()->GetBufferPointer();
+  std::vector< float > ODFFibVector;
   int ODFBlockIndex = 0;
   int ODFCurrentBlockSize = 0;
-
-  // while there are voxels to convert
   unsigned long Voxelindex = 0 ;
-  while( Voxelindex < size[0]*size[1]*size[2] )
+  unsigned long BlockStartVoxelIndex = 0 ;
+  while( Voxelindex < size[0]*size[1]*size[2] ) // while there are voxels to convert
   {
-    if( size[0]*size[1]*size[2] - Voxelindex > ODFBlockSize) // if there is more than 'ODFBlockSize' remaining voxels => block of 'ODFBlockSize' voxels
+    if( size[0]*size[1]*size[2] - Voxelindex >= ODFBlockSize) // if there is more than 'ODFBlockSize' remaining voxels => block of 'ODFBlockSize' voxels
     {
       ODFCurrentBlockSize = ODFBlockSize;
     }
@@ -311,27 +287,45 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib)
     {
       ODFCurrentBlockSize = size[0]*size[1]*size[2] - Voxelindex;
     }
-    Voxelindex = Voxelindex + ODFCurrentBlockSize;
-    float* ODFFibArray = new float [ ODFCurrentBlockSize * NbDirs/2 ];
+    ODFFibVector.resize( ODFCurrentBlockSize * NbDirs/2 );
+    BlockStartVoxelIndex = Voxelindex;
 
     // for all directions
     for ( unsigned int dir=0; dir < NbDirs/2 ; ++dir )
     {
+      Voxelindex = BlockStartVoxelIndex;
+
       // for all voxels supposed to be in the block
-      for ( unsigned int ODFBlockVoxelIndex=0; ODFBlockVoxelIndex < ODFCurrentBlockSize ; ++ODFBlockVoxelIndex )
+      for ( unsigned int ODFBlockVoxelIndex=0; ODFBlockVoxelIndex < ODFCurrentBlockSize ; ++ODFBlockVoxelIndex, ++Voxelindex )
       {
-        ODFFibArray[ dir*ODFCurrentBlockSize + ODFBlockVoxelIndex ] = ODFArray[ ODFBlockVoxelIndex*NbDirs + dir ] ;
+        ODFFibVector[ dir*ODFCurrentBlockSize + ODFBlockVoxelIndex ] = ODFArray[ Voxelindex*NbDirs + dir ] ;
       }
     } // for all directions  =>  end of the current block
 
     std::ostringstream ODFBlockIndexout;
     ODFBlockIndexout << ODFBlockIndex;
     ODFBlockIndex++;
+    std::string ODFMatrixName = "odf" + ODFBlockIndexout.str();
 
-    ImageMatrices.push_back( GetMatMatrixFromData< float >( ODFFibArray, NbDirs/2, ODFCurrentBlockSize, FLOAT, "odf" + ODFBlockIndexout.str() ) );
-    delete []ODFFibArray;
+    ImageMatrices.push_back( GetMatMatrixFromData< float >( &*ODFFibVector.begin(), NbDirs/2, ODFCurrentBlockSize, FLOAT, ODFMatrixName.c_str() ) );
 
   } // while there are voxels to convert
+
+/*
+ODFArray (ITK image):
+ 642   642   642   642
+-----|-----|-----|-----|...    x 1000000 voxels
+
+ODFFibArray (Fib image):
+   20000       20000       20000
+-----------|-----------|-----------|...    x 321 dirs
+
+dir        E [0 ; 320]    -> dir
+BlockVoxel E [0 ; 19999]  -> ODFBlockVoxelIndex
+voxel      E [0 ; 999999] -> Voxelindex
+
+==> ODFFibArray[ dir*20000 + BlockVoxel ] = ODFArray[ voxel*642 + dir ] ;
+*/
 
   std::cout<<"DONE"<<std::endl;
   std::cout<<"Status : ODF converted in "<< ODFBlockIndex <<" blocks"<<std::endl;
@@ -345,17 +339,13 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib)
   return true;
 }
 
-  /////////////////////////////////////////
- //                 ITK                 //
-/////////////////////////////////////////
-
 ODFImageType::Pointer loadITK(std::string filename) // returns the coeffs of the sph. harm of the ODF
 {
   typedef itk::ImageFileReader< ODFImageType >  ODFReaderType;
   ODFReaderType::Pointer ODFReader       = ODFReaderType::New();
   ODFImageType::Pointer  ODFCoeffsImage  = ODFImageType::New();
 
-  std::cout<<"Status : Loading ODF ITK image: "<<filename<<"... ";
+  std::cout<<"Status : Loading ODF ITK image: "<<filename<<" ... ";
   ODFReader->SetFileName ( filename ) ;
   try
   {
@@ -372,6 +362,46 @@ ODFImageType::Pointer loadITK(std::string filename) // returns the coeffs of the
 
   return ODFCoeffsImage;
 } // loadITK()
+
+  /////////////////////////////////////////
+ //            FIB -> ITK               //
+/////////////////////////////////////////
+
+std::vector<MatMatrix*> loadFib(std::string filename)
+{
+  std::vector<MatMatrix*> ImageMatrices;
+  std::vector<MatMatrix*> EmptyVector; // EXIT_FAILURE
+
+  std::cout<<"Status : Loading fib file: "<<filename<<" ... ";
+
+  void* in = gzopen(filename.c_str(), "rb");
+  if (!in)
+  {
+     std::cout<<"Error  : gzopen failed"<<std::endl;
+     return EmptyVector;
+  }
+
+  for(unsigned int index = 0 ; !gzeof(in) ; ++index)
+  {
+    MatMatrix * matrix= new MatMatrix;
+
+    if(!matrix->readMat(in))
+    {
+      std::cout<<"Error  : read matrix failed"<<std::endl;
+      return EmptyVector;
+    }
+
+    ImageMatrices.push_back(matrix);
+
+  } // for()
+
+  gzclose(in);
+
+  std::cout<<"DONE"<<std::endl;
+
+  return ImageMatrices;
+
+} // std::vector<MatMatrix*> loadFib()
 
 template<class T > void GetSize( char* data_ptr , itk::ImageBase< 3 >::SizeType &size )
 {
@@ -393,7 +423,7 @@ template<class T > void GetSpacing( char* data_ptr , itk::ImageBase< 3 >::Spacin
 
 template<class T > void WriteITKScalarImage( char* data_ptr, std::string filename, typename itk::Image <T, 3>::SizeType size, typename itk::Image <T, 3>::SpacingType spacing )
 {
-  std::cout<<"Status : Writing out ITK scalar image: " << filename << "... ";
+  std::cout<<"Status : Writing out ITK scalar image: " << filename << " ... ";
 
   // ITK types and definitions
   typedef itk::Image <T, 3>  ImageType ;
@@ -531,7 +561,7 @@ bool writeITK( std::vector<MatMatrix*> ImageMatrices, std::string outputODFITK)
   for (unsigned int index = 0; index < ImageMatrices.size() ;++index)
   {
     // Display matrix content
-/*    std::cout<<"======== MAT ================================="<<std::endl;
+    std::cout<<"======== MAT ================================="<<std::endl;
     std::cout<<"type\trows\tcols\tnamelen\tcount\tname"<<std::endl;
     std::cout<<ImageMatrices[index]->type<<"\t";
     std::cout<<ImageMatrices[index]->rows<<"\t";
@@ -539,7 +569,7 @@ bool writeITK( std::vector<MatMatrix*> ImageMatrices, std::string outputODFITK)
     std::cout<<ImageMatrices[index]->namelen<<"\t";
     std::cout<<ImageMatrices[index]->count<<"\t";
     std::cout<<ImageMatrices[index]->name<<"\t"<<std::endl;
-*/
+
     // Dimension
     if( ImageMatrices[index]->name == "dimension" )
     {
