@@ -1,6 +1,6 @@
 /*
 ./ODFfibConvert --ODFfib /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/dwi-00.src.gz.odf8.f5rec.qbi.sh8.0.006.fib.gz
-./ODFfibConvert --ODFitk /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/odf.nrrd
+./ODFfibConvert --ODFitk /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/odf.nrrd --mask /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/maskDSI.nii.gz --fa /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/fa.nrrd
 */
 
 /* std classes */
@@ -134,7 +134,7 @@ public:
 
 bool writeOutFibFile(std::vector<MatMatrix*> ImageMatrices, std::string filename)
 {
-  std::cout<<"Status : Writing out fib ODF image: " << filename << " ... ";
+  std::cout<< "Status : Writing out fib ODF image: " << filename << " ... " <<std::endl;
 
   // Open gz file for writing
   void* out = gzopen(filename.c_str(), "wb");
@@ -150,6 +150,7 @@ bool writeOutFibFile(std::vector<MatMatrix*> ImageMatrices, std::string filename
     std::cout<<ImageMatrices[i]->count<<"\t";
     std::cout<<ImageMatrices[i]->name<<"\t"<<std::endl;
 */
+    std::cout<< "Matrix: " << i+1 << " / " << ImageMatrices.size() << " : "<< ImageMatrices[i]->name <<std::endl;
 
     if( !ImageMatrices[i]->writeMat(out) )
     {
@@ -176,7 +177,7 @@ template< class T > MatMatrix* GetMatMatrixFromData (const T* data, unsigned int
   return matrix;
 }
 
-template< class T > T* GetArrayFromFile( std::string filename, bool SkipFirstLine ) // SkipFirstLine needed for vertices file (datFile: first line = nb of vertices)
+template< class T > T* GetArrayFromFile( std::string filename, bool SkipFirstLine ) // SkipFirstLine needed for vertices file ( = datFile -> first line = nb of vertices)
 {
   std::ifstream InfileStream (filename.c_str() , std::ios::in); // open in reading
   if(! InfileStream) // error while opening
@@ -222,24 +223,56 @@ template< class T > T* GetArrayFromFile( std::string filename, bool SkipFirstLin
   return data;
 }
 
-// ODF type
-typedef itk::VectorImage< float, 3 > ODFImageType; // ODF is in float in DSI studio
+template< class T > typename itk::Image< T, 3 >::Pointer loadScalarITKImage( std::string ScalarImageFilename )
+{
+  typedef itk::Image < T, 3 > ImageType ;
+  typedef itk::ImageFileReader< ImageType >  ReaderType;
+  typename ReaderType::Pointer Reader = ReaderType::New();
+  typename ImageType::Pointer  Image  = ImageType::New();
 
-bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib)
+  std::cout<<"Status : Loading scalar ITK image: "<<ScalarImageFilename<<" ... ";
+
+  Reader->SetFileName ( ScalarImageFilename ) ;
+  try
+  {
+    Reader->Update() ; 
+  }
+  catch( itk::ExceptionObject & excp )
+  {
+    std::cerr << "Error  : Problem reading the input scalar image: " << ScalarImageFilename <<  std::endl;
+    std::cerr << excp << std::endl;
+    return NULL;
+  }
+  Image = Reader->GetOutput();
+
+  std::cout<<"DONE"<<std::endl;
+
+  return Image;
+}
+
+void MaskFAImage ( double* FAArray, short* MaskArray, unsigned long ArraySize )
+{
+  for( unsigned long index = 0 ; index < ArraySize ; index++ )
+  {
+    if( MaskArray[index] == 0 ) // if outside of mask
+    {
+      FAArray[index] = 0;
+    }
+  }
+  return;
+}
+
+// ITK image types
+typedef itk::VectorImage< float, 3 >  ODFImageType; // ODF is in float in DSI studio
+
+bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib, std::string maskImageFilename, std::string FAImageFilename)
 {
   std::vector<MatMatrix*> ImageMatrices;
 
   // Reconstruct ODF: convert sph. harm. coeffs to ODF value by vertex by sampling coeffs on vertices
   std::cout<<"Status : Reconstructing ODF (can take some time) ... ";
-
-  typedef itk::Image < double, 3 > FAImageType ;
-  ODFImageType::Pointer ODFSampledImage = ODFImageType::New();
-  FAImageType::Pointer  FAImage         = FAImageType::New();
-
   ODFReconstructor ODFreconstructor ( ODFCoeffsImage, NbDirs/2, 15, datFile ); // ODFReconstructor(ODFImageType::Pointer Input_image, unsigned long numberOfSamplesOnSphere, unsigned long numberOfSpharm, std::string filename )
-  ODFSampledImage = ODFreconstructor.ReconstructODFImage(); // ODFSampledImage is a vector image that contains sampled ODF for each vertex on the sphere // m_ODFImage->SetVectorLength ( numberOfSamplesOnSphere * 2) ;
-  FAImage = ODFreconstructor.GetFAImage();
-
+  ODFImageType::Pointer ODFSampledImage = ODFreconstructor.ReconstructODFImage(); // ODFSampledImage is a vector image that contains sampled ODF for each vertex on the sphere // m_ODFImage->SetVectorLength ( numberOfSamplesOnSphere * 2) ;
   std::cout<<"DONE"<<std::endl;
 
   //Size
@@ -265,8 +298,13 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib)
   ImageMatrices.push_back( GetMatMatrixFromData< short >( FacesArray, 3, NbFaces, SHORT, "odf_faces") );
   delete []FacesArray;
 
-  // FA
-  double *FAArray = FAImage->GetPixelContainer()->GetBufferPointer();
+  // FA    // TODO: Check size of images (ODF, mask and fa) to check they are the same
+  // !! declaration of itk::Image< T, 3 >::Pointer needed otherwise empty arrays
+  itk::Image< short, 3 >::Pointer  MaskImage = loadScalarITKImage< short >( maskImageFilename );
+  short* MaskArray = MaskImage->GetPixelContainer()->GetBufferPointer();
+  itk::Image< double, 3 >::Pointer FAImage   = loadScalarITKImage< double >( FAImageFilename );
+  double* FAArray  = FAImage->GetPixelContainer()->GetBufferPointer();
+  MaskFAImage( FAArray, MaskArray, size[0]*size[1]*size[2] ); // will modify FAArray
   ImageMatrices.push_back( GetMatMatrixFromData< double >( FAArray, 1, size[0]*size[1]*size[2], DOUBLE, "gfa") );
 
   // Read ODF array and fill vector with matrices to be written out
@@ -339,7 +377,7 @@ voxel      E [0 ; 999999] -> Voxelindex
   return true;
 }
 
-ODFImageType::Pointer loadITK(std::string filename) // returns the coeffs of the sph. harm of the ODF
+ODFImageType::Pointer loadITK(std::string filename) // returns the sph. harm coeffs of the ODF
 {
   typedef itk::ImageFileReader< ODFImageType >  ODFReaderType;
   ODFReaderType::Pointer ODFReader       = ODFReaderType::New();
@@ -353,12 +391,14 @@ ODFImageType::Pointer loadITK(std::string filename) // returns the coeffs of the
   }
   catch( itk::ExceptionObject & excp )
   {
-    std::cerr << "Error  : Problem reading the input ODF file: " << filename <<  std::endl;
-    std::cerr << excp << std::endl;
+    std::cout << "FAIL" << std::endl << "Error  : Problem reading the input ODF file: " << filename <<  std::endl;
+    std::cout << excp << std::endl;
     return NULL;
   }
   ODFCoeffsImage = ODFReader->GetOutput();
   std::cout<<"DONE"<<std::endl;
+
+  // TODO: Check number of components in ODFCoeffsImage: it must be 15
 
   return ODFCoeffsImage;
 } // loadITK()
@@ -377,7 +417,7 @@ std::vector<MatMatrix*> loadFib(std::string filename)
   void* in = gzopen(filename.c_str(), "rb");
   if (!in)
   {
-     std::cout<<"Error  : gzopen failed"<<std::endl;
+     std::cout << "FAIL" << std::endl <<"Error  : gzopen failed"<<std::endl;
      return EmptyVector;
   }
 
@@ -387,7 +427,7 @@ std::vector<MatMatrix*> loadFib(std::string filename)
 
     if(!matrix->readMat(in))
     {
-      std::cout<<"Error  : read matrix failed"<<std::endl;
+      std::cout << "FAIL" << std::endl <<"Error  : read matrix failed"<<std::endl;
       return EmptyVector;
     }
 
@@ -530,6 +570,11 @@ template<class T > void GetVertices( char* data_ptr, int nbVertices, std::string
 
 bool writeITK( std::vector<MatMatrix*> ImageMatrices, std::string outputODFITK)
 {
+  if( ImageMatrices.size() == 0)
+  {
+    return false;
+  }
+
   std::cout<<"Status : Writing ITK image: "<<outputODFITK<<std::endl;
 
   std::string outputFolder = itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODFITK).c_str() );
@@ -686,12 +731,25 @@ int main (int argc, char* argv[])
   if( ODFfib == "" &&  ODFitk == "" )
   {
     std::cout<<"Error  : Please give an input ODF image."<<std::endl;
+    return 1;
   }
 
   if( ODFfib != "" &&  ODFitk != "" )
   {
     std::cout<<"Warning: As both ITK and fib files have been given, the ITK image will be used."<<std::endl;
     ODFfib = ""; // so the ITK image is used
+  }
+
+  if( ODFitk != "" &&  fa == "" ) // TODO: FA can be any scalar image to display with the ODF in DSI studio
+  {
+    std::cout<<"Error  : A FA image is required to convert ITK image to fib file."<<std::endl;
+    return 1;
+  }
+
+  if( ODFitk != "" &&  mask == "" ) // TODO: If no mask given, create a mask image of the size of the ODF filled with all ones
+  {
+    std::cout<<"Error  : A mask is required to convert ITK image to fib file."<<std::endl;
+    return 1;
   }
 
   if( outputODF == "" )
@@ -717,7 +775,7 @@ int main (int argc, char* argv[])
   }
   else // ITK -> fib
   {
-   if( ! writeFib( loadITK(ODFitk), outputODF ) )
+   if( ! writeFib( loadITK(ODFitk), outputODF, mask, fa ) )
     {
       return 1;
     }

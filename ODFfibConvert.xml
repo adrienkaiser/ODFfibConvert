@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <executable>
   <title>ODF fib Convert</title>
-  <description>Conversion ITK/fib. Give either an ODF image in itk format or fib format, if both are given the conversion ITK to fib will be done.</description>
+  <description>Conversion ITK/fib. Give either an ODF image in itk format or fib format, if both are given the conversion ITK to fib will be done. The ODF itk image must be a vector image containing the 15 spherical harmonics coefficients for each voxel.</description>
   <contributor>Adrien Kaiser</contributor>
   <version>1.0</version>
   <parameters>
@@ -10,7 +10,7 @@
     <image>
       <name>ODFitk</name>
       <longflag>ODFitk</longflag>
-      <description>ODF image in itk format (.nrrd, .nii, .nii.gz)</description>
+      <description>ODF image in itk format (.nrrd, .nii, .nii.gz). A mask and a FA image are required to convert ITK image to fib file.</description>
       <label>ODF itk Image</label>
     </image>
     <image>
@@ -18,6 +18,18 @@
       <longflag>ODFfib</longflag>
       <description>ODF image in fib format (.fib, .fib.gz)</description>
       <label>ODF fib Image</label>
+    </image>
+    <image>
+      <name>mask</name>
+      <longflag>mask</longflag>
+      <description>Mask image to apply to the ODF in itk format (.nrrd, .nii, .nii.gz)</description>
+      <label>Mask Image</label>
+    </image>
+    <image>
+      <name>fa</name>
+      <longflag>fa</longflag>
+      <description>FA image in itk format (.nrrd, .nii, .nii.gz)</description>
+      <label>FA Image</label>
     </image>
   </parameters>
   <parameters>
