@@ -8,7 +8,7 @@
 #include <fstream>
 #include <iostream>
 
-#include "zlib.h"
+#include <zlib.h>
 
 /* ITK classes */
 #include <itkImage.h>
@@ -18,164 +18,23 @@
 #include <itkVectorImage.h>
 #include <itksys/SystemTools.hxx>
 
+/* DSIstudio header */
+#include <libs/mat_file.hpp>
+#include <libs/utility/prog_interface.cpp>
+
 /* Homemade classes */
 #include "ODFfibConvertCLP.h" //generated when ccmake
 #include "ODFReconstructor.h" // Comes from COST, modified to have ODFType = float instead of double and comment all std::cout
 
-/* types */
-#define DOUBLE  0
-#define FLOAT   10
-#define UINT    20
-#define SHORT   30
-#define USHORT  40
-#define UCHAR   50
-
-const unsigned int element_size_array[10] = {8,4,4,2,2,1,0,0,0,0};
-/*
-char              1byte
-short int (short) 2bytes
-int               4bytes
-long int (long)   4bytes
-bool              1byte
-float             4bytes
-double            8bytes
-long double       8bytes
-*/
-
 unsigned int NbDirs = 642; // Icosahedron tesselation (subdivision of the whole sphere) in DSI studio
-unsigned int NbFaces = 1280;
+unsigned int NbFaces = 1280; // faces resulting from the tesselation
 const unsigned int ODFBlockSize = 20000; // DSIstudio/libs/dsi/odf_process.hpp:60
 std::string datFile = "${CMAKE_CURRENT_SOURCE_DIR}/ODFVertices.dat";
 std::string FacesFile = "${CMAKE_CURRENT_SOURCE_DIR}/ODFFaces.dat";
 
   /////////////////////////////////////////
- //           MAT MATRIX CLASS          //
-/////////////////////////////////////////
-
-// dsistudio/libs/mat_file.hpp:62:  class MatMatrix
-// dsistudio/libs/mat_file.hpp:306: class MatFile
-class MatMatrix
-{
-public:
-  // Data
-  std::string name;
-  unsigned int type;
-  unsigned int rows;
-  unsigned int cols;
-  unsigned int count;
-  unsigned int namelen;
-  std::vector<char> data_buf;
-  char* data_ptr;
-
-  MatMatrix(void):type(0),rows(0),cols(0),data_ptr(0) {}
-  MatMatrix(const std::string& name_):namelen(name_.size()+1),name(name_),data_ptr(0) {}
-
-  template<class T> void assign(const T* data_ptr_,unsigned int rows_,unsigned int cols_,unsigned int type_)
-  {
-    data_ptr = (char*)data_ptr_;
-    rows = rows_;
-    cols = cols_;
-    type = type_;
-    count = rows * cols ;
-  }
-
-  // FIB -> ITK
-  bool readMat(void* in)
-  { 
-    unsigned int imagf = 0; // content useless but variable necessary
-
-    if (gzread(in,(char*)&type,4) == -1 || type > 100 || type % 10 > 1) return false;
-    if (type % 10) type = 0; // text
-    if (gzread(in,(char*)&rows,4) == -1) return false;
-    if (gzread(in,(char*)&cols,4) == -1) return false;
-    if (gzread(in,(char*)&imagf,4) == -1) return false;
-    if (gzread(in,(char*)&namelen,4) == -1) return false;
-    std::vector<char> buffer(namelen+1);
-    if (gzread(in,(char*)&*buffer.begin(),namelen) == -1) return false;
-
-    count = rows*cols;
-    name = &*buffer.begin();
-
-    unsigned int total_size = count*element_size_array[(type%100)/10];
-    try
-    {
-      std::vector<char> allocator(total_size);
-      allocator.swap(data_buf); // swap ?? => allocate memory ??
-    }
-    catch (...)
-    {
-      return false;
-    }
-    data_ptr = &*data_buf.begin(); // data_buf only used to allocate memory
-
-    return gzread(in,(char*)data_ptr,total_size) != -1;
-  }
-
-  // ITK -> FIB
-  bool writeMat(void* out)
-  {
-    unsigned int imagf = 0;
-    gzwrite( out, (const char*)&type, 4 );
-    gzwrite( out, (const char*)&rows, 4 );
-    gzwrite( out, (const char*)&cols, 4 );
-    gzwrite( out, (const char*)&imagf, 4 );
-    gzwrite( out, (const char*)&namelen, 4 );
-    gzwrite( out, (const char*)&*name.begin(), namelen );
-    gzwrite( out, (const char*)data_ptr, rows*cols*element_size_array[(type%100)/10] );
-
-    return true;
-  }
-
-}; // class MatMatrix
-
-  /////////////////////////////////////////
  //            ITK -> FIB               //
 /////////////////////////////////////////
-
-bool writeOutFibFile(std::vector<MatMatrix*> ImageMatrices, std::string filename)
-{
-  std::cout<< "Status : Writing out fib ODF image: " << filename << " ... " <<std::endl;
-
-  // Open gz file for writing
-  void* out = gzopen(filename.c_str(), "wb");
-
-  for(unsigned int i=0; i<ImageMatrices.size(); ++i)
-  {
-/*    std::cout<<"======== MAT ================================="<<std::endl;
-    std::cout<<"type\trows\tcols\tnamelen\tcount\tname"<<std::endl;
-    std::cout<<ImageMatrices[i]->type<<"\t";
-    std::cout<<ImageMatrices[i]->rows<<"\t";
-    std::cout<<ImageMatrices[i]->cols<<"\t";
-    std::cout<<ImageMatrices[i]->namelen<<"\t";
-    std::cout<<ImageMatrices[i]->count<<"\t";
-    std::cout<<ImageMatrices[i]->name<<"\t"<<std::endl;
-*/
-    std::cout<< "Matrix: " << i+1 << " / " << ImageMatrices.size() << " : "<< ImageMatrices[i]->name <<std::endl;
-
-    if( !ImageMatrices[i]->writeMat(out) )
-    {
-      std::cout<<"FAIL"<<std::endl;
-      return false;
-    }
-  }
-
-  std::cout<<"DONE"<<std::endl;
-
-  gzclose(out);
-
-  return true;
-}
-
-// Create a MatMatrix with all infos from data array
-// Function = equivalent of void MatFile::add_matrix() called by void OutputODF::end() with &*data to be const ??
-template< class T > MatMatrix* GetMatMatrixFromData (const T* data, unsigned int Mrows, unsigned int Mcols, unsigned int Mtype, const char* MName )
-{
-  MatMatrix* matrix(new MatMatrix(MName));
-
-  matrix -> assign< T >(data, Mrows, Mcols, Mtype);
-
-  return matrix;
-}
 
 template< class T > T* GetArrayFromFile( std::string filename, bool SkipFirstLine ) // SkipFirstLine needed for vertices file ( = datFile -> first line = nb of vertices)
 {
@@ -216,12 +75,41 @@ template< class T > T* GetArrayFromFile( std::string filename, bool SkipFirstLin
   {
     for( int j = 0 ; j < Vertices[0].size() ; j++ )
     {
-      data[i*j] = Vertices[i][j];
+      data[ i*Vertices[0].size() + j ] = Vertices[i][j];
     }
   }
 
   return data;
 }
+
+// ITK image types
+typedef itk::VectorImage< float, 3 >  ODFImageType; // ODF is in float in DSI studio
+
+ODFImageType::Pointer loadITK(std::string filename) // returns the sph. harm coeffs of the ODF
+{
+  typedef itk::ImageFileReader< ODFImageType >  ODFReaderType;
+  ODFReaderType::Pointer ODFReader       = ODFReaderType::New();
+  ODFImageType::Pointer  ODFCoeffsImage  = ODFImageType::New();
+
+  std::cout<<"Status : Loading ODF ITK image: "<<filename<<" ... ";
+  ODFReader->SetFileName ( filename ) ;
+  try
+  {
+    ODFReader->Update() ; 
+  }
+  catch( itk::ExceptionObject & excp )
+  {
+    std::cout << "FAIL" << std::endl << "Error  : Problem reading the input ODF file: " << filename <<  std::endl;
+    std::cout << excp << std::endl;
+    return NULL;
+  }
+  ODFCoeffsImage = ODFReader->GetOutput();
+  std::cout<<"DONE"<<std::endl;
+
+  // TODO: Check number of components in ODFCoeffsImage: it must be 15
+
+  return ODFCoeffsImage;
+} // loadITK()
 
 template< class T > typename itk::Image< T, 3 >::Pointer loadScalarITKImage( std::string ScalarImageFilename )
 {
@@ -262,12 +150,13 @@ void MaskFAImage ( double* FAArray, short* MaskArray, unsigned long ArraySize )
   return;
 }
 
-// ITK image types
-typedef itk::VectorImage< float, 3 >  ODFImageType; // ODF is in float in DSI studio
-
+// Master function
 bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib, std::string maskImageFilename, std::string FAImageFilename)
 {
-  std::vector<MatMatrix*> ImageMatrices;
+  MatFile mat_writer(outputODFfib.c_str());
+
+// add_matrix creates the matrix and write it to file
+// template<typename Type>    void add_matrix(const char* name,const Type* data_ptr,unsigned int rows,unsigned int cols)
 
   // Reconstruct ODF: convert sph. harm. coeffs to ODF value by vertex by sampling coeffs on vertices
   std::cout<<"Status : Reconstructing ODF (can take some time) ... ";
@@ -278,34 +167,36 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib, st
   //Size
   ODFImageType::SizeType size  = ODFSampledImage->GetLargestPossibleRegion().GetSize();
   short sizeArray[3] = {size[0], size[1], size[2]}; // SizeValueType = unsigned long  -> short
-  ImageMatrices.push_back( GetMatMatrixFromData< short >(sizeArray, 1, 3, SHORT, "dimension") );
+  mat_writer.add_matrix("dimension", sizeArray, 1, 3);
 
   // Spacing
   ODFImageType::SpacingType spacing = ODFSampledImage->GetSpacing();
   float spacingArray[3] = {spacing[0], spacing[1], spacing[2]}; // SpacingValueType = double  -> float
-  ImageMatrices.push_back( GetMatMatrixFromData< float >( spacingArray, 1, 3, FLOAT, "voxel_size") );
+  mat_writer.add_matrix("voxel_size", spacingArray, 1, 3);
 
 //  ODFImageType::PointType     origin    = ODFSampledImage->GetOrigin();
 //  ODFImageType::DirectionType direction = ODFSampledImage->GetDirection();
 
   // odf_vertices
   double* VerticesArray = GetArrayFromFile< double >(datFile, true);
-  ImageMatrices.push_back( GetMatMatrixFromData< double >( VerticesArray, 3, NbDirs, DOUBLE, "odf_vertices") );
+  mat_writer.add_matrix("odf_vertices", VerticesArray, 3, NbDirs);
   delete []VerticesArray;
 
   // odf_faces
   short* FacesArray = GetArrayFromFile< short >(FacesFile, false);
-  ImageMatrices.push_back( GetMatMatrixFromData< short >( FacesArray, 3, NbFaces, SHORT, "odf_faces") );
+  mat_writer.add_matrix("odf_faces", FacesArray, 3, NbFaces);
   delete []FacesArray;
 
-  // FA    // TODO: Check size of images (ODF, mask and fa) to check they are the same
+// TODO: Check size of images (ODF, mask and fa) to check they are the same
+
+  // FA
   // !! declaration of itk::Image< T, 3 >::Pointer needed otherwise empty arrays
   itk::Image< short, 3 >::Pointer  MaskImage = loadScalarITKImage< short >( maskImageFilename );
   short* MaskArray = MaskImage->GetPixelContainer()->GetBufferPointer();
   itk::Image< double, 3 >::Pointer FAImage   = loadScalarITKImage< double >( FAImageFilename );
   double* FAArray  = FAImage->GetPixelContainer()->GetBufferPointer();
   MaskFAImage( FAArray, MaskArray, size[0]*size[1]*size[2] ); // will modify FAArray
-  ImageMatrices.push_back( GetMatMatrixFromData< double >( FAArray, 1, size[0]*size[1]*size[2], DOUBLE, "gfa") );
+  mat_writer.add_matrix("gfa", FAArray, 1, size[0]*size[1]*size[2]);
 
   // Read ODF array and fill vector with matrices to be written out
   std::cout<<"Status : Converting ODF data ... ";
@@ -345,7 +236,7 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib, st
     ODFBlockIndex++;
     std::string ODFMatrixName = "odf" + ODFBlockIndexout.str();
 
-    ImageMatrices.push_back( GetMatMatrixFromData< float >( &*ODFFibVector.begin(), NbDirs/2, ODFCurrentBlockSize, FLOAT, ODFMatrixName.c_str() ) );
+    mat_writer.add_matrix(ODFMatrixName.c_str(), &*ODFFibVector.begin(), NbDirs/2, ODFCurrentBlockSize);
 
   } // while there are voxels to convert
 
@@ -368,100 +259,14 @@ voxel      E [0 ; 999999] -> Voxelindex
   std::cout<<"DONE"<<std::endl;
   std::cout<<"Status : ODF converted in "<< ODFBlockIndex <<" blocks"<<std::endl;
 
-  // Write out fib file
-  if( !writeOutFibFile(ImageMatrices,outputODFfib) )
-  {
-    return false;
-  }
-
   return true;
 }
-
-ODFImageType::Pointer loadITK(std::string filename) // returns the sph. harm coeffs of the ODF
-{
-  typedef itk::ImageFileReader< ODFImageType >  ODFReaderType;
-  ODFReaderType::Pointer ODFReader       = ODFReaderType::New();
-  ODFImageType::Pointer  ODFCoeffsImage  = ODFImageType::New();
-
-  std::cout<<"Status : Loading ODF ITK image: "<<filename<<" ... ";
-  ODFReader->SetFileName ( filename ) ;
-  try
-  {
-    ODFReader->Update() ; 
-  }
-  catch( itk::ExceptionObject & excp )
-  {
-    std::cout << "FAIL" << std::endl << "Error  : Problem reading the input ODF file: " << filename <<  std::endl;
-    std::cout << excp << std::endl;
-    return NULL;
-  }
-  ODFCoeffsImage = ODFReader->GetOutput();
-  std::cout<<"DONE"<<std::endl;
-
-  // TODO: Check number of components in ODFCoeffsImage: it must be 15
-
-  return ODFCoeffsImage;
-} // loadITK()
 
   /////////////////////////////////////////
  //            FIB -> ITK               //
 /////////////////////////////////////////
 
-std::vector<MatMatrix*> loadFib(std::string filename)
-{
-  std::vector<MatMatrix*> ImageMatrices;
-  std::vector<MatMatrix*> EmptyVector; // EXIT_FAILURE
-
-  std::cout<<"Status : Loading fib file: "<<filename<<" ... ";
-
-  void* in = gzopen(filename.c_str(), "rb");
-  if (!in)
-  {
-     std::cout << "FAIL" << std::endl <<"Error  : gzopen failed"<<std::endl;
-     return EmptyVector;
-  }
-
-  for(unsigned int index = 0 ; !gzeof(in) ; ++index)
-  {
-    MatMatrix * matrix= new MatMatrix;
-
-    if(!matrix->readMat(in))
-    {
-      std::cout << "FAIL" << std::endl <<"Error  : read matrix failed"<<std::endl;
-      return EmptyVector;
-    }
-
-    ImageMatrices.push_back(matrix);
-
-  } // for()
-
-  gzclose(in);
-
-  std::cout<<"DONE"<<std::endl;
-
-  return ImageMatrices;
-
-} // std::vector<MatMatrix*> loadFib()
-
-template<class T > void GetSize( char* data_ptr , itk::ImageBase< 3 >::SizeType &size )
-{
-  for( int i = 0 ; i < 3 ; i++ )
-  {
-    size[ i ] = static_cast< itk::ImageBase< 3 >::SizeValueType > ( *(T *)( data_ptr + sizeof(T) * i ) );  // char= 1 byte => get N bytes of the char array for each T
-    //                                            SizeValueType = unsigned long
-  }
-}
-
-template<class T > void GetSpacing( char* data_ptr , itk::ImageBase< 3 >::SpacingType &spacing )
-{
-  for( int i = 0 ; i < 3 ; i++ )
-  {
-    spacing[ i ] = static_cast< itk::ImageBase< 3 >::SpacingValueType > ( *(T *)( data_ptr + sizeof(T) * i ) );  // char= 1 byte => get N bytes of the char array for each T
-    //                                               SpacingValueType = double
-  }
-}
-
-template<class T > void WriteITKScalarImage( char* data_ptr, std::string filename, typename itk::Image <T, 3>::SizeType size, typename itk::Image <T, 3>::SpacingType spacing )
+template<class T > void WriteITKScalarImage( T* data_ptr, std::string filename, typename itk::ImageBase< 3 >::SizeType size, typename itk::ImageBase< 3 >::SpacingType spacing )
 {
   std::cout<<"Status : Writing out ITK scalar image: " << filename << " ... ";
 
@@ -501,10 +306,10 @@ template<class T > void WriteITKScalarImage( char* data_ptr, std::string filenam
   T *NewImageArray;
   NewImageArray = NewImage->GetPixelContainer()->GetBufferPointer() ;
 
-  // Cast data and fill buffer
+  // Fill buffer
   for( int i = 0 ; i < size[0]*size[1]*size[2] ; i++ )
   {
-    NewImageArray[ i ] = *(T *)( data_ptr + sizeof(T) * i ) ;  // char= 1 byte => get N bytes of the char array for each T
+    NewImageArray[ i ] = data_ptr[ i ];
   }
 
   // Write out image
@@ -529,36 +334,20 @@ template<class T > void WriteITKScalarImage( char* data_ptr, std::string filenam
   return;
 } // void WriteITKScalarImage()
 
-
-template<class T > void GetVertices( char* data_ptr, int nbVertices, std::string filename ) // matrix dim = (3, nbVertices)
+template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string filename ) // matrix dim = (3, nbVertices)
 {
   std::cout<<"Status : Writing file: " << filename <<std::endl;
 
-  std::vector< std::vector< T > > Vertices;
-  Vertices.resize(3);
-
-  // Get vertices
-  for( int i = 0 ; i < 3 ; i++ )
-  {
-    Vertices[i].resize(nbVertices);
-    for( int j = 0 ; j < nbVertices ; j++ )
-    {
-      Vertices[i][j] = *(T *)( data_ptr + sizeof(T) * i*j ) ;  // char= 1 byte => get N bytes of the char array for each T
-//std::cout << Vertices[i][j]  << std::endl;
-    }
-  }
-
-  // Write out in a file
-  std::ofstream VerticesFileStream (filename.c_str() , std::ios::out | std::ios::trunc);  // opening in writing with erasing the open file
+  std::ofstream VerticesFileStream (filename.c_str() , std::ios::out | std::ios::trunc); // opening in writing with erasing the open file
   if(! VerticesFileStream)
   {
-    std::cout<<"Error  : Creating file: "<< filename <<std::endl;
+    std::cout<<"Error : Creating file: "<< filename <<std::endl;
     return;
   }
 
   for( int j = 0 ; j < nbVertices ; j++ ) // 1 vertex by line
   {
-    VerticesFileStream << Vertices[0][j] << " " << Vertices[1][j] << " " << Vertices[2][j] << std::endl;
+    VerticesFileStream << data_ptr[ j ] << " " << data_ptr[ nbVertices + j ] << " " << data_ptr[ 2*nbVertices + j ] << std::endl;
   }
 
   VerticesFileStream.close();
@@ -567,153 +356,65 @@ template<class T > void GetVertices( char* data_ptr, int nbVertices, std::string
 }
 
 // Master Function
-
-bool writeITK( std::vector<MatMatrix*> ImageMatrices, std::string outputODFITK)
+bool writeITK( std::string filename, std::string outputODFITK)
 {
-  if( ImageMatrices.size() == 0)
+  std::cout<<"Status : Reading fib file"<<std::endl;
+
+  std::string outputFolder = itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODFITK).c_str() );
+
+  MatFile mat_reader;
+  mat_reader.load_from_file( filename.c_str() );
+  if( mat_reader.get_matrix_count() == 0)
   {
     return false;
   }
 
-  std::cout<<"Status : Writing ITK image: "<<outputODFITK<<std::endl;
-
-  std::string outputFolder = itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODFITK).c_str() );
-
-  itk::ImageBase< 3 >::SizeType    size;
-  itk::ImageBase< 3 >::SpacingType spacing;
-  float z0;
-
-  std::vector< std::string > ImagesToWriteOut; // = {"gfa", "iso", "fa0", "fa1", "fa2", "fa3", "fa4", "nqa0", "nqa1", "nqa2", "nqa3", "nqa4", "index0", "index1", "index2", "index3", "index4"};
-  ImagesToWriteOut.push_back("gfa");
-  ImagesToWriteOut.push_back("iso");
-  ImagesToWriteOut.push_back("fa0");
-  ImagesToWriteOut.push_back("fa1");
-  ImagesToWriteOut.push_back("fa2");
-  ImagesToWriteOut.push_back("fa3");
-  ImagesToWriteOut.push_back("fa4");
-  ImagesToWriteOut.push_back("nqa0");
-  ImagesToWriteOut.push_back("nqa1");
-  ImagesToWriteOut.push_back("nqa2");
-  ImagesToWriteOut.push_back("nqa3");
-  ImagesToWriteOut.push_back("nqa4");
-  ImagesToWriteOut.push_back("index0");
-  ImagesToWriteOut.push_back("index1");
-  ImagesToWriteOut.push_back("index2");
-  ImagesToWriteOut.push_back("index3");
-  ImagesToWriteOut.push_back("index4");
-
-  // for all matrices
-  for (unsigned int index = 0; index < ImageMatrices.size() ;++index)
+  // Display content of file
+  std::cout<< "==========================" <<std::endl;
+  for (unsigned int index = 0; index < mat_reader.get_matrix_count() ; ++index)
   {
-    // Display matrix content
-    std::cout<<"======== MAT ================================="<<std::endl;
-    std::cout<<"type\trows\tcols\tnamelen\tcount\tname"<<std::endl;
-    std::cout<<ImageMatrices[index]->type<<"\t";
-    std::cout<<ImageMatrices[index]->rows<<"\t";
-    std::cout<<ImageMatrices[index]->cols<<"\t";
-    std::cout<<ImageMatrices[index]->namelen<<"\t";
-    std::cout<<ImageMatrices[index]->count<<"\t";
-    std::cout<<ImageMatrices[index]->name<<"\t"<<std::endl;
+    std::cout<< mat_reader.get_matrix_name(index) <<std::endl;
+  }
+  std::cout<< "==========================" <<std::endl;
 
-    // Dimension
-    if( ImageMatrices[index]->name == "dimension" )
-    {
-      switch( ImageMatrices[index]->type )
-      {
-        case UINT:
-          GetSize< unsigned int >(ImageMatrices[index]->data_ptr, size);
-          break ;
-        case SHORT:
-          GetSize< short >(ImageMatrices[index]->data_ptr, size);
-          break ;
-        case USHORT:
-          GetSize< unsigned short >(ImageMatrices[index]->data_ptr, size);
-          break ;
-        case UCHAR:
-          GetSize< unsigned char >(ImageMatrices[index]->data_ptr, size);
-          break ;
-        default:
-          return false;
-      } // switch()
+  // Get Data
 
-      std::cout<<"Dimension = ["<< size[0] << ", "<< size[1]<< " , "<< size[2]<<"]"<<std::endl; 
-    } // if dimension
+  unsigned int row,col;
 
-    // Spacing
-    else if( ImageMatrices[index]->name == "voxel_size" )
-    {
-      switch( ImageMatrices[index]->type )
-      {
-        case DOUBLE:
-          GetSpacing< double >(ImageMatrices[index]->data_ptr, spacing);
-          break ;
-        case FLOAT:
-          GetSpacing< float >(ImageMatrices[index]->data_ptr, spacing);
-          break ;
-        default:
-          return false;
-      }
-      std::cout<<"VoxelSize = ["<< spacing[0] << ", "<< spacing[1]<< " , "<< spacing[2]<<"]"<<std::endl;
-    } // if spacing
+  // dim & spacing
+  short* dim = 0;
+  mat_reader.get_matrix("dimension",row,col,dim);
+  std::cout<< row << " " << col << " | " << dim[0] <<" " <<  dim[1] << " " << dim[2] << " dimension"  <<std::endl;
+  itk::ImageBase< 3 >::SizeType size;
+  size[0] = dim[0];
+  size[1] = dim[1];
+  size[2] = dim[2];
 
-    // z0
-    else if( ImageMatrices[index]->name == "z0" )
-    {
-      z0 = *(float *)ImageMatrices[index]->data_ptr ;
-      std::cout<<"z0 = "<<z0<<std::endl;
-    }
+  double* vs = 0;
+  mat_reader.get_matrix("voxel_size",row,col,vs);
+  std::cout<< row << " " << col << " | " << vs[0] <<" " <<  vs[1] << " " << vs[2] << " voxel_size" <<std::endl;
+  itk::ImageBase< 3 >::SpacingType spacing;
+  spacing[0] = vs[0];
+  spacing[1] = vs[1];
+  spacing[2] = vs[2];
 
-    // images to write out
-//    else if( ImageMatrices[index]->name == "gfa" ) // !!! any image needs to be after size & spacing
-    // if vector contains name of current matrix -> write out image
-    else if( std::find(ImagesToWriteOut.begin(), ImagesToWriteOut.end(), (std::string)ImageMatrices[index]->name) != ImagesToWriteOut.end() )
-    {
-      switch( ImageMatrices[index]->type )
-      {
-        case DOUBLE:
-          WriteITKScalarImage< double >(ImageMatrices[index]->data_ptr, outputFolder + "/" + ImageMatrices[index]->name + ".nrrd", size, spacing);
-          break ;
-        case FLOAT:
-          WriteITKScalarImage< float >(ImageMatrices[index]->data_ptr, outputFolder + "/" + ImageMatrices[index]->name + ".nrrd", size, spacing);
-          break ;
-        case SHORT:
-          WriteITKScalarImage< short >(ImageMatrices[index]->data_ptr, outputFolder + "/" + ImageMatrices[index]->name + ".nrrd", size, spacing);
-          break ;
-        case UINT:
-          WriteITKScalarImage< unsigned int >(ImageMatrices[index]->data_ptr, outputFolder + "/" + ImageMatrices[index]->name + ".nrrd", size, spacing);
-          break ;
-        default:
-          return false;
-      }
-    } // if image to write out
+  // odf vertices
+  float* odfVertices = 0;
+  mat_reader.get_matrix("odf_vertices",row,col,odfVertices);
+  std::cout<< row << " " << col << " odf_vertices" <<std::endl;
+  GetVertices< float >(odfVertices, col, (outputFolder + "/odf_vertices.txt").c_str());
 
-    // odf_vertices and odf_faces
-    else if( ImageMatrices[index]->name == "odf_vertices" || ImageMatrices[index]->name == "odf_faces")
-    {
-      switch( ImageMatrices[index]->type )
-      {
-        case DOUBLE:
-          GetVertices< double         >(ImageMatrices[index]->data_ptr, ImageMatrices[index]->cols, outputFolder + "/" + ImageMatrices[index]->name + ".txt");
-          break ;
-        case FLOAT:
-          GetVertices< float          >(ImageMatrices[index]->data_ptr, ImageMatrices[index]->cols, outputFolder + "/" + ImageMatrices[index]->name + ".txt");
-          break ;
-        case SHORT:
-          GetVertices< short          >(ImageMatrices[index]->data_ptr, ImageMatrices[index]->cols, outputFolder + "/" + ImageMatrices[index]->name + ".txt");
-          break ;
-        case UINT:
-          GetVertices< unsigned int   >(ImageMatrices[index]->data_ptr, ImageMatrices[index]->cols, outputFolder + "/" + ImageMatrices[index]->name + ".txt");
-          break ;
-        case USHORT:
-          GetVertices< unsigned short >(ImageMatrices[index]->data_ptr, ImageMatrices[index]->cols, outputFolder + "/" + ImageMatrices[index]->name + ".txt");
-          break ;
-        default:
-          return false;
-      }
-    } // if odf_vertices or odf_faces
+  // odf faces
+  short* odfFaces = 0;
+  mat_reader.get_matrix("odf_faces",row,col,odfFaces);
+  std::cout<< row << " " << col << " odf_faces" <<std::endl;
+  GetVertices< short >(odfFaces, col, (outputFolder + "/odf_faces.txt").c_str());
 
-  } // for all matrices
-
+  // fa
+  double* fa;
+  mat_reader.get_matrix("gfa",row,col,fa);
+  std::cout<< row << " " << col << " gfa" <<std::endl;
+  WriteITKScalarImage< double >( fa, outputFolder + "/gfa.nrrd", size, spacing );
 
   return true;
 
@@ -768,7 +469,7 @@ int main (int argc, char* argv[])
 /* Convert image */
   if( ODFfib != "" ) // fib -> ITK
   {
-    if( !writeITK( loadFib(ODFfib), outputODF ) )
+    if( !writeITK( ODFfib, outputODF ) )
     {
       return 1;
     }

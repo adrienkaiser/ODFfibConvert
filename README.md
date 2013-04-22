@@ -8,11 +8,15 @@ To convert an ODF from nrrd format to fib format
 $ ./ODFfibConvert --help
 
 USAGE: 
+
    ./ODFfibConvert  [--returnparameterfile <std::string>]
                     [--processinformationaddress <std::string>] [--xml]
-                    [--echo] [--outputODF <std::string>] [--ODFfib
+                    [--echo] [--outputODF <std::string>] [--fa
+                    <std::string>] [--mask <std::string>] [--ODFfib
                     <std::string>] [--ODFitk <std::string>] [--]
                     [--version] [-h]
+
+
 Where: 
 
    --returnparameterfile <std::string>
@@ -33,11 +37,18 @@ Where:
    --outputODF <std::string>
      Output ODF image in ITK or fib format
 
+   --fa <std::string>
+     FA image in itk format (.nrrd, .nii, .nii.gz)
+
+   --mask <std::string>
+     Mask image to apply to the ODF in itk format (.nrrd, .nii, .nii.gz)
+
    --ODFfib <std::string>
      ODF image in fib format (.fib, .fib.gz)
 
    --ODFitk <std::string>
-     ODF image in itk format (.nrrd, .nii, .nii.gz)
+     ODF image in itk format (.nrrd, .nii, .nii.gz). A mask and a FA image
+     are required to convert ITK image to fib file.
 
    --,  --ignore_rest
      Ignores the rest of the labeled arguments following this flag.
@@ -50,8 +61,9 @@ Where:
 
 
    Description: Conversion ITK/fib. Give either an ODF image in itk format
-   or fib format, if both are given the conversion ITK to fib will be
-   done.
+   or fib format, if both are given the conversion ITK to fib will be done.
+   The ODF itk image must be a vector image containing the 15 spherical
+   harmonics coefficients for each voxel.
 
    Author(s): Adrien Kaiser
 
