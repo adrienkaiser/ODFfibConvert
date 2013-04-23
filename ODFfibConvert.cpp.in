@@ -138,20 +138,68 @@ template< class T > typename itk::Image< T, 3 >::Pointer loadScalarITKImage( std
   return Image;
 }
 
-void MaskFAImage ( double* FAArray, short* MaskArray, unsigned long ArraySize )
+unsigned long MaskFAImage( double* FAArray, short* MaskArray, unsigned long ArraySize )
 {
+  unsigned long NbVoxelsInMask = 0;
+
   for( unsigned long index = 0 ; index < ArraySize ; index++ )
   {
     if( MaskArray[index] == 0 ) // if outside of mask
     {
       FAArray[index] = 0;
     }
+    else
+    {
+      NbVoxelsInMask++;
+    }
   }
-  return;
+  return NbVoxelsInMask;
 }
 
+unsigned int WriteODFBlock (unsigned int BlockSize, unsigned int ODFBlockIndex, unsigned int Voxelindex, short* MaskArray, float* ODFArray, MatFile* mat_writer) // returns updated Voxelindex
+{
+/*
+ODFArray (ITK image):
+ 642   642   642   642
+-----|-----|-----|-----|...    x 1000000 voxels
+
+ODFFibArray (Fib image):
+   20000       20000       20000
+-----------|-----------|-----------|...    x 321 dirs
+
+dir        E [0 ; 320]    -> dir
+BlockVoxel E [0 ; 19999]  -> ODFBlockVoxelIndex
+voxel      E [0 ; 999999] -> Voxelindex
+
+==> ODFFibArray[ dir*20000 + BlockVoxel ] = ODFArray[ voxel*642 + dir ] ;
+*/
+  std::vector< float > ODFFibVector;
+  ODFFibVector.resize( BlockSize * NbDirs/2 );
+
+  // for all voxels in the block
+  for ( unsigned int ODFBlockVoxelIndex=0; ODFBlockVoxelIndex < BlockSize ; ++ODFBlockVoxelIndex, ++Voxelindex )
+  {
+    if( MaskArray[ Voxelindex ] != 0 ) // if in mask
+    {
+      for ( unsigned int dir=0; dir < NbDirs/2 ; ++dir ) // for all directions
+      {
+        ODFFibVector[ dir*BlockSize + ODFBlockVoxelIndex ] = ODFArray[ Voxelindex*NbDirs + dir ] ; // see commented part below
+      } // for all directions
+    } // if in mask
+  } // for all voxels in the block
+
+  // Write out block
+  std::ostringstream ODFBlockIndexout;
+  ODFBlockIndexout << ODFBlockIndex;
+  std::string ODFMatrixName = "odf" + ODFBlockIndexout.str();
+
+  mat_writer->add_matrix(ODFMatrixName.c_str(), &*ODFFibVector.begin(), NbDirs/2, BlockSize);
+
+  return Voxelindex;
+} // unsigned int WriteODFBlock()
+
 // Master function
-bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib, std::string maskImageFilename, std::string FAImageFilename)
+bool writeFib (ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib, std::string maskImageFilename, std::string FAImageFilename)
 {
   MatFile mat_writer(outputODFfib.c_str());
 
@@ -195,69 +243,29 @@ bool writeFib(ODFImageType::Pointer ODFCoeffsImage, std::string outputODFfib, st
   short* MaskArray = MaskImage->GetPixelContainer()->GetBufferPointer();
   itk::Image< double, 3 >::Pointer FAImage   = loadScalarITKImage< double >( FAImageFilename );
   double* FAArray  = FAImage->GetPixelContainer()->GetBufferPointer();
-  MaskFAImage( FAArray, MaskArray, size[0]*size[1]*size[2] ); // will modify FAArray
-  mat_writer.add_matrix("gfa", FAArray, 1, size[0]*size[1]*size[2]);
+  unsigned long NbVoxelsInMask = MaskFAImage( FAArray, MaskArray, size[0]*size[1]*size[2] ); // will modify FAArray
+  mat_writer.add_matrix( "fa0", FAArray, 1, size[0]*size[1]*size[2] );
 
   // Read ODF array and fill vector with matrices to be written out
   std::cout<<"Status : Converting ODF data ... ";
   float* ODFArray = ODFSampledImage->GetPixelContainer()->GetBufferPointer();
-  std::vector< float > ODFFibVector;
-  int ODFBlockIndex = 0;
-  int ODFCurrentBlockSize = 0;
+  unsigned int NbBlocks = ( NbVoxelsInMask - NbVoxelsInMask%20000 ) / 20000 ;
+  unsigned int NbVoxelsLastBlock = NbVoxelsInMask%20000 ;
   unsigned long Voxelindex = 0 ;
-  unsigned long BlockStartVoxelIndex = 0 ;
-  while( Voxelindex < size[0]*size[1]*size[2] ) // while there are voxels to convert
+
+  for( unsigned int ODFBlockIndex=0; ODFBlockIndex < NbBlocks; ++ODFBlockIndex ) // for all 20000 voxels blocks
   {
-    if( size[0]*size[1]*size[2] - Voxelindex >= ODFBlockSize) // if there is more than 'ODFBlockSize' remaining voxels => block of 'ODFBlockSize' voxels
-    {
-      ODFCurrentBlockSize = ODFBlockSize;
-    }
-    else // last block: size = nb of remaining voxels
-    {
-      ODFCurrentBlockSize = size[0]*size[1]*size[2] - Voxelindex;
-    }
-    ODFFibVector.resize( ODFCurrentBlockSize * NbDirs/2 );
-    BlockStartVoxelIndex = Voxelindex;
+    Voxelindex = WriteODFBlock(ODFBlockSize, ODFBlockIndex, Voxelindex, MaskArray, ODFArray, &mat_writer);
+  }
 
-    // for all directions
-    for ( unsigned int dir=0; dir < NbDirs/2 ; ++dir )
-    {
-      Voxelindex = BlockStartVoxelIndex;
-
-      // for all voxels supposed to be in the block
-      for ( unsigned int ODFBlockVoxelIndex=0; ODFBlockVoxelIndex < ODFCurrentBlockSize ; ++ODFBlockVoxelIndex, ++Voxelindex )
-      {
-        ODFFibVector[ dir*ODFCurrentBlockSize + ODFBlockVoxelIndex ] = ODFArray[ Voxelindex*NbDirs + dir ] ;
-      }
-    } // for all directions  =>  end of the current block
-
-    std::ostringstream ODFBlockIndexout;
-    ODFBlockIndexout << ODFBlockIndex;
-    ODFBlockIndex++;
-    std::string ODFMatrixName = "odf" + ODFBlockIndexout.str();
-
-    mat_writer.add_matrix(ODFMatrixName.c_str(), &*ODFFibVector.begin(), NbDirs/2, ODFCurrentBlockSize);
-
-  } // while there are voxels to convert
-
-/*
-ODFArray (ITK image):
- 642   642   642   642
------|-----|-----|-----|...    x 1000000 voxels
-
-ODFFibArray (Fib image):
-   20000       20000       20000
------------|-----------|-----------|...    x 321 dirs
-
-dir        E [0 ; 320]    -> dir
-BlockVoxel E [0 ; 19999]  -> ODFBlockVoxelIndex
-voxel      E [0 ; 999999] -> Voxelindex
-
-==> ODFFibArray[ dir*20000 + BlockVoxel ] = ODFArray[ voxel*642 + dir ] ;
-*/
+  if( NbVoxelsLastBlock != 0 ) // if voxels in the last block
+  {
+    Voxelindex = WriteODFBlock(NbVoxelsLastBlock, NbBlocks, Voxelindex, MaskArray, ODFArray, &mat_writer);
+    NbBlocks++; // for display
+  }
 
   std::cout<<"DONE"<<std::endl;
-  std::cout<<"Status : ODF converted in "<< ODFBlockIndex <<" blocks"<<std::endl;
+  std::cout<<"Status : ODF converted in "<< NbBlocks <<" blocks" <<std::endl;
 
   return true;
 }
@@ -355,6 +363,17 @@ template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string fi
   return;
 }
 
+bool AssembleODFBlocks( std::vector< double* > ODFBlocks )
+{
+  // Create the full ODF array
+
+
+  // Write to ITK vector image
+
+
+  return true;
+}
+
 // Master Function
 bool writeITK( std::string filename, std::string outputODFITK)
 {
@@ -369,15 +388,7 @@ bool writeITK( std::string filename, std::string outputODFITK)
     return false;
   }
 
-  // Display content of file
-  std::cout<< "==========================" <<std::endl;
-  for (unsigned int index = 0; index < mat_reader.get_matrix_count() ; ++index)
-  {
-    std::cout<< mat_reader.get_matrix_name(index) <<std::endl;
-  }
-  std::cout<< "==========================" <<std::endl;
-
-  // Get Data
+  //// Get Data
 
   unsigned int row,col;
 
@@ -412,9 +423,29 @@ bool writeITK( std::string filename, std::string outputODFITK)
 
   // fa
   double* fa;
-  mat_reader.get_matrix("gfa",row,col,fa);
-  std::cout<< row << " " << col << " gfa" <<std::endl;
-  WriteITKScalarImage< double >( fa, outputFolder + "/gfa.nrrd", size, spacing );
+  mat_reader.get_matrix("fa0",row,col,fa);
+  std::cout<< row << " " << col << " fa0" <<std::endl;
+  WriteITKScalarImage< double >( fa, outputFolder + "/fa0.nrrd", size, spacing );
+
+  // odf
+  std::vector< double* > ODFBlocks;
+  for (unsigned int index = 0; index < mat_reader.get_matrix_count() ; ++index)
+  {
+    std::string MatrixName ( mat_reader.get_matrix_name(index) ) ;
+    if( MatrixName.find( (std::string)"odf" ) != std::string::npos  &&  MatrixName != "odf_vertices"  &&  MatrixName != "odf_faces" )
+    {
+      double* odf;
+      mat_reader.get_matrix( MatrixName.c_str(), row, col, odf );
+      ODFBlocks.push_back( odf );
+
+      std::cout<< row << " " << col << " " << MatrixName <<std::endl;
+    }
+  }
+
+  if( ! AssembleODFBlocks( ODFBlocks ) )
+  {
+    return false;
+  }
 
   return true;
 
@@ -487,6 +518,12 @@ int main (int argc, char* argv[])
 } // int main
 
 /*
+
+// Mask
+src/libs/dsi/dsi_interface_imp.cpp:322 : mask reconstruction
+
+src/libs/dsi/odf_process.hpp:74 : creation of odf_index_map[]
+
 
 // WRITE .fib file
 
