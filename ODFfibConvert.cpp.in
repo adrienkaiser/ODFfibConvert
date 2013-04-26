@@ -157,13 +157,19 @@ unsigned long MaskFAImage( double* FAArray, short* MaskArray, unsigned long Arra
     }
     else
     {
-      if( FAArray[index] != 0 ) NbVoxelsInMask++; // some FAs are 0 so they are considered outside of mask because FA is used to reconstruct mask afterwards
+      NbVoxelsInMask++;
     }
   }
   return NbVoxelsInMask;
 }
 
-unsigned int WriteODFBlock (unsigned int BlockSize, unsigned int ODFBlockIndex, unsigned int Voxelindex, double* FAArray, ODFType* ODFArray, MatFile* mat_writer) // returns updated Voxelindex
+unsigned int WriteODFBlock (unsigned int BlockSize,
+                            unsigned int ODFBlockIndex,
+                            unsigned int Voxelindex,
+                            double* FAArray,
+                            short* MaskArray,
+                            ODFType* ODFArray,
+                            MatFile* mat_writer) // returns updated Voxelindex
 {
 /*
 ODFArray (ITK reconstructed image):
@@ -187,7 +193,7 @@ voxel      E [0 ; 999999] -> Voxelindex
   unsigned int ODFBlockVoxelIndex=0;
   while ( ODFBlockVoxelIndex < BlockSize )
   {
-    if( FAArray[ Voxelindex ] != 0.0 ) // if in mask // FA used as mask because used to reconstruct mask when loading fib file. (if some FA values are 0)
+    if( FAArray[ Voxelindex ] != 0.0 ||  MaskArray[ Voxelindex ] != 0.0 ) // if in mask // Inside of mask == at least one of fa0 or index0 matrices show != 0
     {
       for ( unsigned int dir=0; dir < NbDirs/2 ; ++dir ) // for all directions
       {
@@ -214,7 +220,11 @@ voxel      E [0 ; 999999] -> Voxelindex
 
 
 // Master function
-bool writeFib (ODFImageType::Pointer ODFSampledImage, std::string outputODFfib, std::string maskImageFilename, std::string FAImageFilename)
+
+bool writeFib (ODFImageType::Pointer ODFSampledImage,
+               std::string outputODFfib,
+               std::string maskImageFilename,
+               std::string FAImageFilename)
 {
   MatFile mat_writer(outputODFfib.c_str());
 
@@ -246,10 +256,13 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage, std::string outputODFfib, 
 
 // TODO: Compare size of images (ODF, mask and fa) to check they are the same
 
-  // FA
-  // !! declaration of itk::Image< T, 3 >::Pointer needed otherwise empty arrays
+  // Mask as index0 (for mask reconstruction)
   itk::Image< short, 3 >::Pointer  MaskImage = loadScalarITKImage< short >( maskImageFilename );
   short* MaskArray = MaskImage->GetPixelContainer()->GetBufferPointer();
+  mat_writer.add_matrix( "index0", MaskArray, 1, size[0]*size[1]*size[2] );
+
+  // FA
+  // !! declaration of itk::Image< T, 3 >::Pointer needed otherwise empty arrays
   itk::Image< double, 3 >::Pointer FAImage   = loadScalarITKImage< double >( FAImageFilename );
   double* FAArray  = FAImage->GetPixelContainer()->GetBufferPointer();
   unsigned long NbVoxelsInMask = MaskFAImage( FAArray, MaskArray, size[0]*size[1]*size[2] ); // will modify FAArray
@@ -264,12 +277,12 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage, std::string outputODFfib, 
 
   for( unsigned int ODFBlockIndex=0; ODFBlockIndex < NbBlocks; ++ODFBlockIndex ) // for all 20000 voxels blocks
   {
-    Voxelindex = WriteODFBlock(ODFBlockSize, ODFBlockIndex, Voxelindex, FAArray, ODFArray, &mat_writer);
+    Voxelindex = WriteODFBlock(ODFBlockSize, ODFBlockIndex, Voxelindex, FAArray, MaskArray, ODFArray, &mat_writer);
   }
 
   if( NbVoxelsLastBlock != 0 ) // if voxels in the last block
   {
-    Voxelindex = WriteODFBlock(NbVoxelsLastBlock, NbBlocks, Voxelindex, FAArray, ODFArray, &mat_writer);
+    Voxelindex = WriteODFBlock(NbVoxelsLastBlock, NbBlocks, Voxelindex, FAArray, MaskArray, ODFArray, &mat_writer);
     NbBlocks++; // for display
   }
 
@@ -285,7 +298,10 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage, std::string outputODFfib, 
  //            FIB -> ITK               //
 /////////////////////////////////////////
 
-template<class T > void WriteITKScalarImage( T* data_ptr, std::string filename, typename itk::ImageBase< 3 >::SizeType size, typename itk::ImageBase< 3 >::SpacingType spacing )
+template<class T > void WriteITKScalarImage( T* data_ptr,
+                                             std::string filename,
+                                             typename itk::ImageBase< 3 >::SizeType size,
+                                             typename itk::ImageBase< 3 >::SpacingType spacing )
 {
   std::cout<<"Status : Writing out ITK scalar image: " << filename << " ... ";
 
@@ -374,7 +390,13 @@ template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string fi
   return;
 }
 
-ODFImageType::Pointer AssembleODFBlocks( std::vector< ODFType* > ODFBlocks, std::vector< unsigned int > BlockSizes, std::string filename, itk::ImageBase< 3 >::SizeType size, itk::ImageBase< 3 >::SpacingType spacing, double* fa )
+ODFImageType::Pointer AssembleODFBlocks( std::vector< ODFType* > ODFBlocks,
+                                         std::vector< unsigned int > BlockSizes,
+                                         std::string filename,
+                                         itk::ImageBase< 3 >::SizeType size,
+                                         itk::ImageBase< 3 >::SpacingType spacing,
+                                         double* fa,
+                                         short* MaskArray )
 {
   std::cout<<"Status : Writing out ITK ODF sampled image: " << filename << " ... ";
 
@@ -435,7 +457,7 @@ voxel      E [0 ; 999999] -> Voxelindex
   // for all voxels in the image
   for( unsigned long VoxelIndex = 0 ; VoxelIndex < size[0]*size[1]*size[2] ; VoxelIndex++ )
   {
-    if( fa[ VoxelIndex ] == 0.0 ) // if outside mask -> all ODFs = 0
+    if( fa[ VoxelIndex ] == 0.0 && MaskArray[ VoxelIndex ] == 0.0 ) // if outside mask -> all ODFs = 0 // Outside of mask == both fa0 and index0 matrices show 0
     {
       for( unsigned int dir=0; dir < NbDirs/2 ; ++dir ) // for all directions
       {
@@ -483,7 +505,7 @@ voxel      E [0 ; 999999] -> Voxelindex
 /// Master Function
 ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK ) // returns the assembled sampled ODF ITK image
 {
-  std::cout<<"Status : Reading fib file"<<std::endl;
+  std::cout<<"Status : Reading fib file: " << filename << std::endl;
 
   std::string outputFolder = itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODFITK).c_str() );
 
@@ -491,6 +513,7 @@ ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK )
   mat_reader.load_from_file( filename.c_str() );
   if( mat_reader.get_matrix_count() == 0)
   {
+    std::cout<<"Error  : Fib file empty" << std::endl;
     return NULL;
   }
 
@@ -527,6 +550,12 @@ ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK )
   std::cout<< row << " " << col << " odf_faces" <<std::endl;
   GetVertices< short >(odfFaces, col, (outputFolder + "/odf_faces.txt").c_str());
 
+  // Mask (index0)
+  short* MaskArray;
+  mat_reader.get_matrix("index0",row,col,MaskArray);
+  std::cout<< row << " " << col << " index0" <<std::endl;
+  WriteITKScalarImage< short >( MaskArray, outputFolder + "/index0.nrrd", size, spacing );
+
   // fa
   double* fa;
   mat_reader.get_matrix("fa0",row,col,fa);
@@ -550,7 +579,7 @@ ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK )
       std::cout<< row << " " << col << " " << MatrixName <<std::endl;
     }
   }
-  ODFImageType::Pointer NewODFSampledImage = AssembleODFBlocks( ODFBlocks, BlockSizes, outputODFITK, size, spacing, fa ); // FA needed for masking
+  ODFImageType::Pointer NewODFSampledImage = AssembleODFBlocks( ODFBlocks, BlockSizes, outputODFITK, size, spacing, fa, MaskArray ); // FA needed for masking
   if( ! NewODFSampledImage )
   {
     return NULL;
