@@ -259,7 +259,7 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage,
   // Mask as index0 (for mask reconstruction)
   itk::Image< short, 3 >::Pointer  MaskImage = loadScalarITKImage< short >( maskImageFilename );
   short* MaskArray = MaskImage->GetPixelContainer()->GetBufferPointer();
-  mat_writer.add_matrix( "index0", MaskArray, 1, size[0]*size[1]*size[2] );
+  mat_writer.add_matrix( "index0", MaskArray, 1, size[0]*size[1]*size[2] ); // DSI studio seg fault when loading if no index0 (needed for reconstruction of mask)
 
   // FA
   // !! declaration of itk::Image< T, 3 >::Pointer needed otherwise empty arrays
@@ -369,6 +369,31 @@ template<class T > void WriteITKScalarImage( T* data_ptr,
   return;
 } // void WriteITKScalarImage()
 
+void WriteOutITKODFImage(std::string filename, ODFImageType::Pointer ODFImage)
+{
+  std::cout<<"Status : Writing out ITK ODF image: " << filename << " ... ";
+
+  typedef itk::ImageFileWriter < ODFImageType > ODFWriterType ;
+  ODFWriterType::Pointer Writer = ODFWriterType::New() ;
+  Writer->SetFileName ( filename ); 
+  Writer->SetInput( ODFImage );
+  Writer->SetUseCompression(true);
+
+  try
+  {
+    Writer->Update();
+  }
+  catch ( itk::ExceptionObject & excp )
+  {
+    std::cerr << "Problem writing the image: " << filename << std::endl ;
+    std::cerr << excp << std::endl ;
+  }
+
+  std::cout<<"DONE"<<std::endl;
+
+  return;
+}
+
 template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string filename ) // matrix dim = (3, nbVertices)
 {
   std::cout<<"Status : Writing file: " << filename <<std::endl;
@@ -398,8 +423,6 @@ ODFImageType::Pointer AssembleODFBlocks( std::vector< ODFType* > ODFBlocks,
                                          double* fa,
                                          short* MaskArray )
 {
-  std::cout<<"Status : Writing out ITK ODF sampled image: " << filename << " ... ";
-
   // ITK types and definitions
   ODFImageType::Pointer NewODFSampledImage = ODFImageType::New() ;
 
@@ -481,23 +504,7 @@ voxel      E [0 ; 999999] -> Voxelindex
   } // for all voxels in the image
 
   // Write out image
-  typedef itk::ImageFileWriter < ODFImageType > ODFSampledWriterType ;
-  ODFSampledWriterType::Pointer Writer = ODFSampledWriterType::New() ;
-  Writer->SetFileName ( filename ); 
-  Writer->SetInput( NewODFSampledImage );
-  Writer->SetUseCompression(true);
-
-  try
-  {
-    Writer->Update();
-  }
-  catch ( itk::ExceptionObject & excp )
-  {
-    std::cerr << "Problem writing the image: " << filename << std::endl ;
-    std::cerr << excp << std::endl ;
-  }
-
-  std::cout<<"DONE"<<std::endl;
+  WriteOutITKODFImage(filename, NewODFSampledImage);
 
   return NewODFSampledImage;
 }
@@ -654,7 +661,11 @@ int main (int argc, char* argv[])
       return 1;
     }
 
-    // HERE we can write out ODFSampledImage
+    bool writeOutODFSampledImage = true;
+    if( writeOutODFSampledImage )
+    {
+      WriteOutITKODFImage( itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODF).c_str() ) + "/ODFsampled.nrrd", ODFSampledImage);
+    }
 
     if( ! writeFib( ODFSampledImage, outputODF, mask, fa ) )
     {
