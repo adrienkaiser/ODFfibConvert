@@ -1,0 +1,496 @@
+
+/* std classes */
+#include <vector>
+#include <fstream>
+#include <iostream>
+
+/* ITK classes */
+#include <itkImage.h>
+#include <itkImageBase.h> // for SizeType and SpacingType without having to declare an ImageType
+#include <itkImageFileReader.h>
+#include <itkImageFileWriter.h>
+#include <itkVectorImage.h>
+
+/* Clapack for reconstruction of spharm */
+extern "C" {
+#include "f2c.h"
+#include "clapack.h"
+int sgels_(char *trans, integer *m, integer *n, integer *
+           nrhs, real *a, integer *lda, real *b, integer *ldb, real *work, integer *lwork, integer *info);
+}
+
+#include "define.h" // types and constant definitions
+
+void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string filename ); // in ODFfibConvert.cxx
+
+// spharm-pdm/Libraries/Shape/Algorithms/ParametricMeshToSPHARMSpatialObjectFilter.cxx: 999:  void ParametricMeshToSPHARMSpatialObjectFilter::ComputeCoeffs()
+// called in                             ParametricMeshToSPHARMSpatialObjectFilter.cxx: 1233: void ParametricMeshToSPHARMSpatialObjectFilter::GenerateData()
+// called at       spharm-pdm/Applications/ParaToSPHARMMeshCLP/ParaToSPHARMMeshCLP.cxx: 485:  spharmFilter->GenerateData();
+
+  /////////////////////////////////////////
+ //            LEGENDRE                 //
+/////////////////////////////////////////
+
+// Not modified
+// Tabelliert P_m^m, P_{m+1}^m, ... P_l^m  in  p_ptr[0]... p_ptr[l-m].
+// Das heisst p_ptr[ll-m] = P_ll^m,   fuer m <= ll <= l.
+// Obiges bezieht sich auf den urspruenglich uebergebenen p_ptr.
+void plgndr_row(const int l, const int m,
+                const double x,
+                const double somx2,             // somx2=sqrt((1.0-x)*(1.0+x));
+                double *p_ptr)
+{
+  double pmm = 1.0;
+
+  if( m > 0 )
+    {
+    double fact = 1.0;
+    for( int i = 1; i <= m; i++ )
+      {
+      pmm *= -fact * somx2;
+      fact += 2.0;
+      }
+    }
+  *p_ptr++ = pmm;
+  if( l > m )
+    {
+    double pmmp1 = x * (2 * m + 1) * pmm;
+    *p_ptr++ = pmmp1;
+    for( int ll = (m + 2); ll <= l; ll++ )
+      {
+      double pll = (x * (2 * ll - 1) * pmmp1 - (ll + m - 1) * pmm) / (ll - m);
+      *p_ptr++ = pll;
+      pmm = pmmp1;
+      pmmp1 = pll;
+      }
+    }
+}
+
+// Not modified
+class ParametricMeshToSPHARMSpatialObjectFilterLegendre
+{
+  const double       SQRT2;
+  double * * *       plm;
+
+  double A(int l, int m)
+  {
+    int    i;
+    double j;
+  
+    // (m >=0) && (l >= m)
+    j = 1.0;
+    for( i = l + m; i > l - m; i-- )
+      {
+      j *= (double)i;
+      }
+    return sqrt( (double) ( (l + l + 1) / j) / (4 * M_PI) );
+  } // double A()
+
+  double P(int l, int m, float z)
+  {
+    int    i;
+    double f, p1o, p_1, p_2;
+
+    if( m == 0 )
+      {
+      if( l == 0 )
+        {
+        return 1;
+        }
+      else
+        {
+        p_1 = z; p_2 = 1;
+        for( i = 2; i <= l; i++ )
+          {
+          p1o = p_1;
+          p_1 = ( (i + i - 1) * z * p_1 - (i - 1) * p_2) / double(i);
+          p_2 = p1o;
+          }
+        return p_1;
+        }
+      }
+    else
+      {
+      f = ( (plm[l])[m])[l - m];
+      for( i = l - m - 1; i >= 0; i-- )
+        {
+        f = z * f + ( (plm[l])[m])[i];
+        }
+      return f;
+      }
+  } // double P()
+
+  void ylm(int l, int m, float x, float y, float z, double & re, double & im)
+  {
+    int    i;
+    double p,  p_ptr[256];
+
+    switch( m )
+      {
+      case 0: re = 1.0; im = 0.0;
+        break;
+      case 1: re = x; im = y; // sincos(atan2(y, x), &im, &re);
+        break;
+      default:
+        //
+        re = (1.0 - z) * (1.0 + z);
+        for( p = re, i = 1; i < m; i++ )
+          {
+          p *= re;
+          }
+        p = sqrt( (double) p);
+        if( p < 1e-20 )
+          {
+          p = 0;
+          }
+        else
+          {
+          p = 1 / p;
+          }
+        im = sin(m * atan2(y, x) );
+        re = cos(m * atan2(y, x) );
+        re *= p; im *= p;
+      }
+    plgndr_row(l, m, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), p_ptr);
+    p = p_ptr[l - m];
+    i = l * (l + 1) / 2 + m;
+    re *= p * a[i] * SQRT2; im *= p * a[i] * SQRT2;
+  } // void ylm()
+
+public:
+  const int L;
+  double *  a;
+  void Ylm(int l, int m, float x, float y, float z, double & re, double & im)
+  {
+  
+    if( m < 0 )
+      {
+      ylm(l, -m, x, y, z, re, im);
+      if( m % 2 == 0 )
+        {
+        im = -im;
+        }
+      else
+        {
+        re = -re;
+        }
+      }
+    else
+      {
+      ylm(l, m, x, y, z, re, im);
+      }
+    // cout << x << "," << y << "," << z << ": ";
+    // cout << re << " " << im << ": ";
+  } // void Ylm()
+
+  void Ylm(int l, int m, float theta, float phi, double & re, double & im)
+  {
+    const int     MAX_L = 10000;
+    static double p[MAX_L + 1];
+    double        z;
+
+    z = cos(theta);
+    // sincos(m*phi, &im, &re);
+    im = sin(m * phi);
+    re = cos(m * phi);
+    plgndr_row(l, m, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), p);
+    re *= a[l * (l + 1) / 2 + m] * p[l - m] * SQRT2;
+    im *= a[l * (l + 1) / 2 + m] * p[l - m] * SQRT2;
+  } // void Ylm()
+
+  ParametricMeshToSPHARMSpatialObjectFilterLegendre(const int l_in) :  SQRT2(sqrt( (double) 2) ),  L(l_in)
+  {
+    int    i, j, l, m, sgn;
+    double n1, n2;
+
+    // compute normalizing factors
+    a = new double[(L + 1) + L * (L + 1) / 2];
+    for( i = 0, l = 0; l <= L; l++ )
+      {
+      for( m = 0; m <= l; m++ )
+        {
+        a[i++] = A(l, m);
+        }
+      }
+    // create associated Legendre polynomials
+    // allocate array to array of polynomials
+    plm = (double * * *) malloc( (L + 1) * sizeof(void *) ); // new double**[L+1];
+    assert(plm != 0);
+    for( l = 0; l <= L; l++ )
+      {
+      // allocate array of polynomials
+      plm[l] = (double * *) malloc( (l + 1) * sizeof(void *) ); // new double*[l+1];
+      assert(plm[l] != 0);
+      for( m = 0; m <= l; m++ )
+        {
+        // allocate array for coeff's of polynomial
+        (plm[l])[m] = (double *) malloc( (l - m + 2 + 1) * sizeof(double) );
+        assert( (plm[l])[m] != 0);
+        ( (plm[l])[m])[l - m + 1] = 0.0;
+        ( (plm[l])[m])[l - m + 2] = 0.0;
+        }
+      }
+    // P(0,0)
+    ( (plm[0])[0])[0] = 1.0; ( (plm[0])[0])[1] = 0.0;  ( (plm[0])[0])[2] = 0.0;
+    // P(1,0)
+    ( (plm[1])[0])[0] = 0.0; ( (plm[1])[0])[1] = -1.0; // *(-1)^m !!!!!!!
+    ( (plm[1])[0])[2] = 0.0; ( (plm[1])[0])[3] = 0.0;
+    // P(1,1)
+    ( (plm[1])[1])[0] = 1.0; ( (plm[1])[1])[1] = 0.0; ( (plm[1])[1])[2] = 0.0;
+    for( l = 2; l <= L; l++ )
+      {
+      // compute coefficients of Legendre polynomials (recursive)
+      n1 = (double)(l + l - 1); n2 = (double)(l - 1);
+      // cout << "l" << l << ":";
+      for( j = l; j > 0; j-- )
+        {
+        ( (plm[l])[0])[j] = (n1 * ( (plm[l - 1])[0])[j - 1] - n2 * ( (plm[l - 2])[0])[j])
+          / (double)l;
+        // cout << " " << ((plm[l])[0])[j];
+        }
+      ( (plm[l])[0])[0] = -n2 * ( (plm[l - 2])[0])[0] / (double)l;
+      // cout << " " << ((plm[l])[0])[0];
+      sgn = 1;
+      for( m = 1; m <= l; m++ )
+        {
+        // differentiate Legendre polynomials m times
+        // cout << " m" << m << ":";
+        sgn *= -1;
+        for( j = l - m; j >= 0; j-- )
+          {
+            ( (plm[l])[m])[j] = sgn * (j + 1) * ( (plm[l])[m - 1])[j + 1];
+          // cout << " " << ((plm[l])[m])[j];
+          }
+        }
+      // cout << endl;
+      }
+  } // ParametricMeshToSPHARMSpatialObjectFilterLegendre()
+
+  ~ParametricMeshToSPHARMSpatialObjectFilterLegendre()
+  {
+    int l, m;
+    for( l = 0; l <= L; l++ )
+      {
+      for( m = 0; m <= l; m++ )
+        {
+        free( (plm[l])[m]);
+        }
+      free(plm[l]);
+      }
+    free(plm);
+    delete [] a;
+    // cout << "destructor called!"<<endl;
+  } // ~ParametricMeshToSPHARMSpatialObjectFilterLegendre()
+};
+
+
+  /////////////////////////////////////////
+ //            FUNCTIONS                //
+/////////////////////////////////////////
+
+// Modified
+int Get_BaseVal( float * & A, int & nvert, int & degree )
+{
+  // Added:
+
+  // get odf vertices from file
+  std::ifstream InfileStream (DATFILE , std::ios::in); // open in reading
+
+  std::string line;
+  double xVert, yVert, zVert;
+
+  std::getline( InfileStream, line ); // void read to avoid reading the first line as triple
+
+  nvert = NBDIRS/2;
+  double * vert = new double[nvert * 3];
+  int i=0;
+  while( std::getline( InfileStream, line ) && i<nvert ) 
+  {
+    std::stringstream linestr(line);
+    linestr >> xVert >> yVert >> zVert;
+
+    vert[3 * i + 0] = xVert;
+    vert[3 * i + 1] = yVert;
+    vert[3 * i + 2] = zVert;
+    i++;
+  }
+
+  InfileStream.close();
+
+  // Original Get_BaseVal():
+
+  double re, im, z;
+
+  unsigned int m_Degree = SPHARMDEGREE;
+  ParametricMeshToSPHARMSpatialObjectFilterLegendre * m_leg;
+
+  if( m_leg )
+    {
+    delete m_leg;
+    }
+  m_leg = new ParametricMeshToSPHARMSpatialObjectFilterLegendre(m_Degree);
+
+  double * plm = new double[(m_Degree + 1) * (m_Degree + 1) * 3];
+
+  degree = m_leg->L + 1;
+  degree *= degree; // fuer re und im
+  A = new float[degree * nvert];
+  for( int ind = 0, i = 0; i < nvert; i++, ind += 3 )
+    {
+    z = vert[ind + 2];
+
+    plgndr_row(m_leg->L, 0, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), plm);
+    for( int l = 0; l <= m_leg->L; l++ )
+      {
+      A[i + l * l * nvert] = m_leg->a[l * (l + 1) / 2] * plm[l];      // assign Y_l^0
+      }
+    plgndr_row(m_leg->L, 1, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), plm);
+
+    im = sin(atan2(vert[ind + 1], vert[ind]) );
+    re = cos(atan2(vert[ind + 1], vert[ind]) );
+    for( int l = 1; l <= m_leg->L; l++ )
+      {
+      int j = l * l + 1;
+      A[i + j * nvert] = m_leg->a[l * (l + 1) / 2 + 1] * plm[l - 1] * re;
+      A[i + j * nvert + nvert] = m_leg->a[l * (l + 1) / 2 + 1] * plm[l - 1] * im;
+      }
+    for( int m = 2; m <= m_leg->L; m++ )
+      {
+      im = sin(m * atan2(vert[ind + 1], vert[ind]) );
+      re = cos(m * atan2(vert[ind + 1], vert[ind]) );
+      // double p= (1.0-z)*(1.0+z);
+      // p= sqrt(pow(p, m));
+      // if (p<1e-20) p= 0; else p= 1/p;
+      // re*= p; im*= p;
+      plgndr_row(m_leg->L, m, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), plm);
+      for( int l = m; l <= m_leg->L; l++ )
+        {
+        int j = l * l + m + m - 1;
+        A[i + j * nvert] = m_leg->a[l * (l + 1) / 2 + m] * plm[l - m] * re;
+        A[i + j * nvert + nvert] = m_leg->a[l * (l + 1) / 2 + m] * plm[l - m] * im;
+        }
+      }
+    }
+
+  delete plm;
+  delete vert;
+
+  return 0;
+}
+
+// Modified
+// Compute all 15 coeffs for 1 voxel only
+float *ComputeCoeffs( ODFType* ODFSampledImageArray, unsigned long VoxelIndex, float * A, int m_int, int n_int )
+{
+/* Solving system A.X = B
+A = basis matrix depending on the vertices only
+X = 15 shparm coeffs
+B = ODF values only
+*/
+
+  integer numRH, m, n;
+  m = m_int;
+  n = n_int;
+  numRH = 1;
+  float * obj = new float[m * numRH];
+  // Get odf data in obj array for equation solving
+  for( int i = 0; i < m; i++ ) // m will be NBDIRS/2
+  {
+    obj[i] = ODFSampledImageArray[ VoxelIndex*NBDIRS/2 + i ];
+  }
+
+  char    trans[20] = "N";
+  int     fac = n * m;
+  integer workSize = fac * 2;
+  integer info;
+  float * work = new float[workSize];
+
+  integer lda = m;
+  integer ldb = m;
+
+  sgels_(trans, &m, &n, &numRH, A, &lda, obj, &ldb, work, &workSize, &info); // From lapack: Solve G(eneral) Equations Linear System _
+  // A is modfied by sgels_
+  // obj contains the flattened coefs
+
+  delete work; // new done in ComputeCoeffs()
+  work = NULL;
+
+  return obj;
+}
+
+// Used with forward declaration using function prototype in ODFfibConvert.cxx
+// Compute coeffs for all voxels and write out image
+void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
+                          std::string filename,
+                          itk::ImageBase< 3 >::SizeType size,
+                          itk::ImageBase< 3 >::SpacingType spacing)
+{
+  std::cout<< "Status : Computing Spherical Harmonics Coefficients"<< std::endl;
+
+  //// Set Image properties
+  ODFImageType::Pointer NewODFCoeffsImage = ODFImageType::New();
+  NewODFCoeffsImage->SetSpacing ( spacing ) ;
+  NewODFCoeffsImage->SetVectorLength ( NBCOEFFS ) ;
+  // origin
+  ODFImageType::PointType origin ;
+  origin[0] = 0;
+  origin[1] = 0;
+  origin[2] = 0;
+  NewODFCoeffsImage->SetOrigin ( origin ) ;
+  // direction
+//  ImageType::DirectionType direction;
+//  ODFCoeffsImage->SetDirection ( direction ) ;
+  // region (size)
+  ODFImageType::IndexType start;
+  start[0] = 0;
+  start[1] = 0;
+  start[2] = 0;
+  ODFImageType::RegionType region;
+  region.SetSize ( size ) ;
+  region.SetIndex ( start ) ;
+  NewODFCoeffsImage->SetRegions ( region ) ;
+  // Allocate image
+  NewODFCoeffsImage->Allocate () ;
+  NewODFCoeffsImage->FillBuffer ( 0 ) ;
+  // Buffer Array
+  ODFType *NewODFCoeffsImageArray;
+  NewODFCoeffsImageArray = NewODFCoeffsImage->GetPixelContainer()->GetBufferPointer() ;
+
+  // Compute Sherical Harmonics coefficients
+  ODFType* ODFSampledImageArray = ODFSampledImage->GetPixelContainer()->GetBufferPointer();
+
+  // Compute basis matrix A: TO BE DONE ONLY ONCE FOR ALL VOXELS (depends only on the odf vertices)
+  float * A;
+  int NbVertices;
+  int NbCoeffs;
+  // Compute basis matrix A
+  Get_BaseVal( A, NbVertices, NbCoeffs ); // will set A, m_int, n_int (reference &)
+
+  // for all voxels in the image
+  int percent=0;
+  for( unsigned long VoxelIndex = 0 ; VoxelIndex < size[0]*size[1]*size[2] ; VoxelIndex++ )
+  {
+    if( VoxelIndex % (size[0]*size[1]*size[2]/10) == 0 ) // display every 10%
+    {
+      std::cout<< percent << "%" <<std::endl;
+      percent += 10;
+    }
+
+    ODFType *SpharmCoeffs = ComputeCoeffs( ODFSampledImageArray, VoxelIndex, A, NbVertices, NbCoeffs );
+
+    for( unsigned int coeff=0; coeff < NBCOEFFS ; ++coeff ) // for all coeffs
+    {
+      NewODFCoeffsImageArray[ VoxelIndex*NBCOEFFS + coeff ] = SpharmCoeffs[ coeff ];
+    } // for all coeffs
+  } // for all voxels in the image
+  std::cout<< "100%" <<std::endl;
+
+  delete A; // new done in Get_BaseVal(), called once so 1 delete
+  A = NULL;
+
+  // write out coeffs image
+  WriteOutITKODFImage( NewODFCoeffsImage, filename );
+
+  return ;
+}
+

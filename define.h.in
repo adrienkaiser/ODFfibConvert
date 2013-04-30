@@ -1,0 +1,38 @@
+
+/* types and constant definitions */
+
+/* ITK image types */
+
+typedef float                          ODFType; // ODf is float in dsistudio
+typedef itk::VectorImage< ODFType, 3 > ODFImageType;
+
+
+/* Constants */
+
+#ifndef NBDIRS
+#define NBDIRS 642 // Icosahedron tesselation (subdivision of the whole sphere) in DSI studio
+#endif
+
+#ifndef NBFACES
+#define NBFACES 1280 // faces resulting from the tesselation
+#endif
+
+#ifndef NBCOEFFS
+#define NBCOEFFS 15 // nb of spherical harmonic coefficients
+#endif
+
+#ifndef SPHARMDEGREE
+#define SPHARMDEGREE 4 // 4 => 2 crossing fibers
+#endif
+
+#ifndef ODFBLOCKSIZE
+#define ODFBLOCKSIZE 20000 // DSIstudio/libs/dsi/odf_process.hpp:60
+#endif
+
+#ifndef DATFILE
+#define DATFILE "${CMAKE_CURRENT_SOURCE_DIR}/ODFVertices.dat"
+#endif
+
+#ifndef FACESFILE
+#define FACESFILE "${CMAKE_CURRENT_SOURCE_DIR}/ODFFaces.dat"
+#endif
