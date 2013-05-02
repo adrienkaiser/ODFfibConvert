@@ -29,16 +29,16 @@ ODFReconstructor::ODFReconstructor(ODFImageType::Pointer Input_image, unsigned l
    this->InitializeFromFile ( filename ) ;
 
    //m_RSHBasisMatrix = new vnl_matrix< double >(numberOfSamplesOnSphere*2, m_NumberOfSphericalHarmonics) ;
-   m_RSHBasisMatrix.set_size ( numberOfSamplesOnSphere * 2, m_NumberOfSphericalHarmonics ) ;
+   m_RSHBasisMatrix.set_size ( numberOfSamplesOnSphere, m_NumberOfSphericalHarmonics ) ;
    
    //Creation of the output image 
    this->m_ODFImage = ODFImageType::New();
    
    ODFImageType::IndexType start;
-   itk::VariableLengthVector< ODFType > f ( numberOfSamplesOnSphere * 2) ;
+   itk::VariableLengthVector< ODFType > f ( numberOfSamplesOnSphere ) ;
 
    ODFImageType::SizeType  size;
-   for( unsigned int i=0; i<numberOfSamplesOnSphere * 2; i++ ) 
+   for( unsigned int i=0; i<numberOfSamplesOnSphere ; i++ ) 
      { 
        f[i] = 0; 
      }
@@ -57,7 +57,7 @@ ODFReconstructor::ODFReconstructor(ODFImageType::Pointer Input_image, unsigned l
    ODFImageType::RegionType region;
    region.SetSize ( size ) ;
    region.SetIndex ( start ) ;
-   m_ODFImage->SetVectorLength ( numberOfSamplesOnSphere * 2) ;
+   m_ODFImage->SetVectorLength ( numberOfSamplesOnSphere ) ;
    m_ODFImage->SetRegions ( region ) ;
    m_ODFImage->Allocate () ;
    m_ODFImage->FillBuffer ( f ) ;
@@ -323,7 +323,7 @@ void ODFReconstructor::InitializeFromFile ( std::string filename )
   }
   myfile.close () ;
 
-  this->MakeSymmetric () ;
+//  this->MakeSymmetric () ;
   //this->WritePhiTheta () ;
 }
 

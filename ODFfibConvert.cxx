@@ -1,6 +1,6 @@
 /*
 ./ODFfibConvert --ODFfib /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/dwi-00.src.gz.odf8.f5rec.qbi.sh8.0.006.fib.gz
-./ODFfibConvert --ODFitk /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/odf.nrrd --mask /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/maskDSI.nii.gz --fa /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/fa.nrrd
+./ODFfibConvert --ODFitk /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/odf.nrrd --mask /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/maskDSI.nii.gz --fa /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/fa.nrrd --outputSampledODF ./ODFsampled.nrrd
 */
 
 /* std classes */
@@ -32,6 +32,35 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
                           std::string filename,
                           itk::ImageBase< 3 >::SizeType size,
                           itk::ImageBase< 3 >::SpacingType spacing);
+
+  /////////////////////////////////////////
+ //              COMMON                 //
+/////////////////////////////////////////
+
+void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string filename )
+{
+  std::cout<<"Status : Writing out ITK ODF image: " << filename << " ... ";
+
+  typedef itk::ImageFileWriter < ODFImageType > ODFWriterType ;
+  ODFWriterType::Pointer Writer = ODFWriterType::New() ;
+  Writer->SetFileName ( filename ); 
+  Writer->SetInput( ODFImage );
+  Writer->SetUseCompression(true);
+
+  try
+  {
+    Writer->Update();
+  }
+  catch ( itk::ExceptionObject & excp )
+  {
+    std::cerr << "Problem writing the image: " << filename << std::endl ;
+    std::cerr << excp << std::endl ;
+  }
+
+  std::cout<<"DONE"<<std::endl;
+
+  return;
+}
 
   /////////////////////////////////////////
  //            ITK -> FIB               //
@@ -83,7 +112,7 @@ template< class T > T* GetArrayFromFile( std::string filename, bool SkipFirstLin
   return data;
 }
 
-ODFImageType::Pointer loadITK(std::string filename) // returns the sph. harm coeffs of the ODF
+ODFImageType::Pointer loadITK(std::string filename, std::string outputSampledODF ) // returns the sampled ODF image
 {
   typedef itk::ImageFileReader< ODFImageType >  ODFReaderType;
   ODFReaderType::Pointer ODFReader       = ODFReaderType::New();
@@ -104,15 +133,31 @@ ODFImageType::Pointer loadITK(std::string filename) // returns the sph. harm coe
   ODFCoeffsImage = ODFReader->GetOutput();
   std::cout<<"DONE"<<std::endl;
 
-  // TODO: Check number of components in ODFCoeffsImage: it must be 15
+  if( ODFCoeffsImage->GetVectorLength() == 15 ) // ODF is given with coeffs
+  {
+    // Reconstruct ODF: convert sph. harm. coeffs to ODF value by vertex by sampling coeffs on vertices
+    std::cout<<"Status : Reconstructing ODF (can take some time)"<<std::endl;
+    ODFReconstructor ODFreconstructor ( ODFCoeffsImage, NBDIRS, 15, DATFILE ); // ODFReconstructor(ODFImageType::Pointer Input_image, unsigned long numberOfSamplesOnSphere, unsigned long numberOfSpharm, std::string filename )
+    ODFImageType::Pointer ODFSampledImage = ODFreconstructor.ReconstructODFImage(); // ODFSampledImage is a vector image that contains sampled ODF for each vertex on the sphere
+    // !! Nb of components is NOT doubled here (see ODFReconstructor.cxx:326)
 
-  // Reconstruct ODF: convert sph. harm. coeffs to ODF value by vertex by sampling coeffs on vertices
-  std::cout<<"Status : Reconstructing ODF (can take some time) ... ";
-  ODFReconstructor ODFreconstructor ( ODFCoeffsImage, NBDIRS/2, 15, DATFILE ); // ODFReconstructor(ODFImageType::Pointer Input_image, unsigned long numberOfSamplesOnSphere, unsigned long numberOfSpharm, std::string filename )
-  ODFImageType::Pointer ODFSampledImage = ODFreconstructor.ReconstructODFImage(); // ODFSampledImage is a vector image that contains sampled ODF for each vertex on the sphere // m_ODFImage->SetVectorLength ( numberOfSamplesOnSphere * 2) ;
-  std::cout<<"DONE"<<std::endl;
+    if( outputSampledODF != "" )
+    {
+      WriteOutITKODFImage( ODFSampledImage, outputSampledODF );
+    }
 
-  return ODFSampledImage;
+    return ODFSampledImage;
+  }
+  else if( ODFCoeffsImage->GetVectorLength() == 321 ) // ODF is given sampled with the right nb of vertices
+  {
+    return ODFCoeffsImage; // ODFCoeffsImage is actually sampled
+  }
+  else
+  {
+    std::cout <<"Error  : Input ODF image must have either 15 (spharm coeffs) or 321 (ODF samples) components."<<std::endl;
+    return NULL;
+  }
+
 } // loadITK()
 
 template< class T > typename itk::Image< T, 3 >::Pointer loadScalarITKImage( std::string ScalarImageFilename )
@@ -170,7 +215,7 @@ unsigned int WriteODFBlock (unsigned int BlockSize,
 {
 /*
 ODFArray (ITK reconstructed image):
-  642   642   642   642
+  321   321   321   321
 |-----|-----|-----|-----|... x 1000000 voxels
 
 ODFFibArray (Fib image):
@@ -184,7 +229,7 @@ voxel      E [0 ; 999999] -> Voxelindex
 ==> ODFFibArray[ BlockVoxel*321 + dir ] = ODFArray[ voxel*642 + dir ] ;
 */
   std::vector< ODFType > ODFFibVector;
-  ODFFibVector.resize( BlockSize * NBDIRS/2 );
+  ODFFibVector.resize( BlockSize * NBDIRS );
 
   // for all voxels in the block
   unsigned int ODFBlockVoxelIndex=0;
@@ -192,9 +237,9 @@ voxel      E [0 ; 999999] -> Voxelindex
   {
     if( FAArray[ Voxelindex ] != 0.0 ||  MaskArray[ Voxelindex ] != 0.0 ) // if in mask // Inside of mask == at least one of fa0 or index0 matrices show != 0
     {
-      for ( unsigned int dir=0; dir < NBDIRS/2 ; ++dir ) // for all directions
+      for ( unsigned int dir=0; dir < NBDIRS ; ++dir ) // for all directions
       {
-        ODFFibVector[ ODFBlockVoxelIndex*NBDIRS/2 + dir ] = ODFArray[ Voxelindex*NBDIRS + dir ];
+        ODFFibVector[ ODFBlockVoxelIndex*NBDIRS + dir ] = ODFArray[ Voxelindex*NBDIRS + dir ];
       } // for all directions
 
       ODFBlockVoxelIndex++;
@@ -210,7 +255,7 @@ voxel      E [0 ; 999999] -> Voxelindex
   ODFBlockIndexout << ODFBlockIndex;
   std::string ODFMatrixName = "odf" + ODFBlockIndexout.str();
 
-  mat_writer->add_matrix(ODFMatrixName.c_str(), &*ODFFibVector.begin(), NBDIRS/2, BlockSize);
+  mat_writer->add_matrix(ODFMatrixName.c_str(), &*ODFFibVector.begin(), NBDIRS, BlockSize);
 
   return Voxelindex;
 } // unsigned int WriteODFBlock()
@@ -223,10 +268,11 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage,
                std::string maskImageFilename,
                std::string FAImageFilename)
 {
+
   MatFile mat_writer(outputODFfib.c_str());
 
 // add_matrix creates the matrix and write it to file
-// template<typename Type>    void add_matrix(const char* name,const Type* data_ptr,unsigned int rows,unsigned int cols)
+// DSIstudio/libs/mat_file.hpp:414 : template<typename Type> void add_matrix(const char* name,const Type* data_ptr,unsigned int rows,unsigned int cols)
 
   //Size
   ODFImageType::SizeType size  = ODFSampledImage->GetLargestPossibleRegion().GetSize();
@@ -238,12 +284,9 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage,
   float spacingArray[3] = {spacing[0], spacing[1], spacing[2]}; // SpacingValueType = double  -> float
   mat_writer.add_matrix("voxel_size", spacingArray, 1, 3);
 
-//  ODFImageType::PointType     origin    = ODFSampledImage->GetOrigin();
-//  ODFImageType::DirectionType direction = ODFSampledImage->GetDirection();
-
   // odf_vertices
   double* VerticesArray = GetArrayFromFile< double >(DATFILE, true);
-  mat_writer.add_matrix("odf_vertices", VerticesArray, 3, NBDIRS);
+  mat_writer.add_matrix("odf_vertices", VerticesArray, 3, NBDIRS*2);
   delete []VerticesArray;
 
   // odf_faces
@@ -266,7 +309,7 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage,
   mat_writer.add_matrix( "fa0", FAArray, 1, size[0]*size[1]*size[2] );
 
   // Read ODF array and fill vector with matrices to be written out
-  std::cout<<"Status : Converting ODF data ... ";
+  std::cout<<"Status : Converting ODF data" <<std::endl;
   ODFType* ODFArray = ODFSampledImage->GetPixelContainer()->GetBufferPointer();
   unsigned int NbBlocks = ( NbVoxelsInMask - NbVoxelsInMask%ODFBLOCKSIZE ) / ODFBLOCKSIZE ; // blocks of 20000 without the eventual last block
   unsigned int NbVoxelsLastBlock = NbVoxelsInMask%ODFBLOCKSIZE ;
@@ -275,15 +318,17 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage,
   for( unsigned int ODFBlockIndex=0; ODFBlockIndex < NbBlocks; ++ODFBlockIndex ) // for all 20000 voxels blocks
   {
     Voxelindex = WriteODFBlock(ODFBLOCKSIZE, ODFBlockIndex, Voxelindex, FAArray, MaskArray, ODFArray, &mat_writer);
+
+    std::cout<< ODFBlockIndex+1 << "/" << NbBlocks + (int)(NbVoxelsLastBlock!=0) <<" blocks written" <<std::endl;
   }
 
   if( NbVoxelsLastBlock != 0 ) // if voxels in the last block
   {
     Voxelindex = WriteODFBlock(NbVoxelsLastBlock, NbBlocks, Voxelindex, FAArray, MaskArray, ODFArray, &mat_writer);
     NbBlocks++; // for display
+    std::cout<< NbBlocks << "/" << NbBlocks <<" blocks written" <<std::endl;
   }
 
-  std::cout<<"DONE"<<std::endl;
   std::cout<<"Status : ODF converted in "<< NbBlocks <<" blocks" <<std::endl;
 
   std::cout<<"Status : Done writing out fib file: " << outputODFfib << std::endl;
@@ -315,10 +360,6 @@ template<class T > void WriteITKScalarImage( T* data_ptr,
   origin[1] = 0;
   origin[2] = 0;
   NewImage->SetOrigin ( origin ) ;
-
-  // direction
-//  ImageType::DirectionType direction;
-//  NewImage->SetDirection ( direction ) ;
 
   // region (size)
   typename ImageType::IndexType start;
@@ -366,31 +407,6 @@ template<class T > void WriteITKScalarImage( T* data_ptr,
   return;
 } // void WriteITKScalarImage()
 
-void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string filename )
-{
-  std::cout<<"Status : Writing out ITK ODF image: " << filename << " ... ";
-
-  typedef itk::ImageFileWriter < ODFImageType > ODFWriterType ;
-  ODFWriterType::Pointer Writer = ODFWriterType::New() ;
-  Writer->SetFileName ( filename ); 
-  Writer->SetInput( ODFImage );
-  Writer->SetUseCompression(true);
-
-  try
-  {
-    Writer->Update();
-  }
-  catch ( itk::ExceptionObject & excp )
-  {
-    std::cerr << "Problem writing the image: " << filename << std::endl ;
-    std::cerr << excp << std::endl ;
-  }
-
-  std::cout<<"DONE"<<std::endl;
-
-  return;
-}
-
 template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string filename ) // matrix dim = (3, nbVertices)
 {
   std::cout<<"Status : Writing file: " << filename <<std::endl;
@@ -425,7 +441,7 @@ ODFImageType::Pointer AssembleODFBlocks( std::vector< ODFType* > ODFBlocks,
 
   //// Set Image properties
   NewODFSampledImage->SetSpacing ( spacing ) ;
-  NewODFSampledImage->SetVectorLength ( NBDIRS/2 ) ;
+  NewODFSampledImage->SetVectorLength ( NBDIRS ) ;
 
   // origin
   ODFImageType::PointType origin ;
@@ -433,10 +449,6 @@ ODFImageType::Pointer AssembleODFBlocks( std::vector< ODFType* > ODFBlocks,
   origin[1] = 0;
   origin[2] = 0;
   NewODFSampledImage->SetOrigin ( origin ) ;
-
-  // direction
-//  ImageType::DirectionType direction;
-//  NewODFSampledImage->SetDirection ( direction ) ;
 
   // region (size)
   ODFImageType::IndexType start;
@@ -459,7 +471,7 @@ ODFImageType::Pointer AssembleODFBlocks( std::vector< ODFType* > ODFBlocks,
   // Fill buffer by assembling all ODF arrays
 /*
 ODFArray (ITK image):
-  642   642   642   642
+  321   321   321   321
 |-----|-----|-----|-----|... x 1000000 voxels
 
 ODFFibArray (Fib image):
@@ -478,7 +490,8 @@ voxel      E [0 ; 999999] -> Voxelindex
   int percent=0;
   for( unsigned long VoxelIndex = 0 ; VoxelIndex < size[0]*size[1]*size[2] ; VoxelIndex++ )
   {
-    if( VoxelIndex % (size[0]*size[1]*size[2]/10) == 0 ) // display every 10%
+    // display every 10%
+    if( VoxelIndex % (size[0]*size[1]*size[2]/10) == 0 ) // does not work if nbVoxels < 10 (OK for 3D images)
     {
       std::cout<< percent << "%" <<std::endl;
       percent += 10;
@@ -486,16 +499,16 @@ voxel      E [0 ; 999999] -> Voxelindex
 
     if( fa[ VoxelIndex ] == 0.0 && MaskArray[ VoxelIndex ] == 0.0 ) // if outside mask -> all ODFs = 0 // Outside of mask == both fa0 and index0 matrices show 0
     {
-      for( unsigned int dir=0; dir < NBDIRS/2 ; ++dir ) // for all directions
+      for( unsigned int dir=0; dir < NBDIRS ; ++dir ) // for all directions
       {
-        NewODFSampledImageArray[ VoxelIndex*NBDIRS/2 + dir ] = 0.0;
+        NewODFSampledImageArray[ VoxelIndex*NBDIRS + dir ] = 0.0;
       }
     } // if outside mask
     else // if inside mask
     {
-      for( unsigned int dir=0; dir < NBDIRS/2 ; ++dir ) // for all directions
+      for( unsigned int dir=0; dir < NBDIRS ; ++dir ) // for all directions
       {
-        NewODFSampledImageArray[ VoxelIndex*NBDIRS/2 + dir ] = ODFBlocks[ BlockIndex ][ BlockVoxelIndex*NBDIRS/2 + dir ];
+        NewODFSampledImageArray[ VoxelIndex*NBDIRS + dir ] = ODFBlocks[ BlockIndex ][ BlockVoxelIndex*NBDIRS + dir ];
       } // for all directions
 
       ++BlockVoxelIndex;
@@ -509,9 +522,9 @@ voxel      E [0 ; 999999] -> Voxelindex
   std::cout<< "100%" <<std::endl;
 
   // Write out image
-  WriteOutITKODFImage( NewODFSampledImage, filename );
+//  WriteOutITKODFImage( NewODFSampledImage, filename );
 
-  return NewODFSampledImage;
+  return NewODFSampledImage; // NewODFSampledImage has 321 components
 }
 
 /// Master Function
@@ -598,7 +611,7 @@ ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK )
   }
 
   // Reconstruct sph. harm. from ODf samples
-  ComputeSpharmCoeffs( NewODFSampledImage, outputFolder + "/ODFcoeffs.nrrd", size, spacing );
+  ComputeSpharmCoeffs( NewODFSampledImage, outputFolder + "/ODFcoeffs.nrrd", size, spacing ); // NewODFSampledImage has 321 components
 
   return NewODFSampledImage;
 
@@ -663,17 +676,13 @@ int main (int argc, char* argv[])
   }
   else // ITK -> fib
   {
-    ODFImageType::Pointer ODFSampledImage = loadITK( ODFitk );
+    std::string outputSampledODF = itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODF).c_str() ) + "/ODFsampled.nrrd"; // "";
+
+    ODFImageType::Pointer ODFSampledImage = loadITK( ODFitk, outputSampledODF );
 
     if( ! ODFSampledImage )
     {
       return 1;
-    }
-
-    bool writeOutODFSampledImage = true;
-    if( writeOutODFSampledImage )
-    {
-      WriteOutITKODFImage( ODFSampledImage, itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODF).c_str() ) + "/ODFsampled.nrrd" );
     }
 
     if( ! writeFib( ODFSampledImage, outputODF, mask, fa ) )

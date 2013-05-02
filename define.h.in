@@ -10,7 +10,7 @@ typedef itk::VectorImage< ODFType, 3 > ODFImageType;
 /* Constants */
 
 #ifndef NBDIRS
-#define NBDIRS 642 // Icosahedron tesselation (subdivision of the whole sphere) in DSI studio
+#define NBDIRS 321 // Icosahedron tesselation (subdivision of the whole sphere) in DSI studio NON symmetrized
 #endif
 
 #ifndef NBFACES

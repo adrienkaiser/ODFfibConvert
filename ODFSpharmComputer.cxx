@@ -299,9 +299,9 @@ int Get_BaseVal( float * & A, int & nvert, int & degree )
   std::string line;
   double xVert, yVert, zVert;
 
-  std::getline( InfileStream, line ); // void read to avoid reading the first line as triple
+  std::getline( InfileStream, line ); // void read to avoid reading the first line as point
 
-  nvert = NBDIRS/2;
+  nvert = NBDIRS;
   double * vert = new double[nvert * 3];
   int i=0;
   while( std::getline( InfileStream, line ) && i<nvert ) 
@@ -379,38 +379,52 @@ int Get_BaseVal( float * & A, int & nvert, int & degree )
 }
 
 // Modified
-// Compute all 15 coeffs for 1 voxel only
+// Compute all 25 coeffs for 1 voxel only
 float *ComputeCoeffs( ODFType* ODFSampledImageArray, unsigned long VoxelIndex, float * A, int m_int, int n_int )
 {
 /* Solving system A.X = B
-A = basis matrix depending on the vertices only
-X = 15 shparm coeffs
-B = ODF values only
+A = basis matrix depending on the vertices only (computed once at the beginning)  321 rows x 25 cols
+X = 25 shparm coeffs 25 rows x 1 col
+B = ODF values only  321 rows x 1col
 */
 
   integer numRH, m, n;
   m = m_int;
   n = n_int;
   numRH = 1;
-  float * obj = new float[m * numRH];
+  float * obj = new float[m * numRH]; // will contain data and then overwritten with results
   // Get odf data in obj array for equation solving
-  for( int i = 0; i < m; i++ ) // m will be NBDIRS/2
+  for( int i = 0; i < m; i++ ) // m will be NBDIRS
   {
-    obj[i] = ODFSampledImageArray[ VoxelIndex*NBDIRS/2 + i ];
+    obj[i] = ODFSampledImageArray[ VoxelIndex*NBDIRS + i ];
   }
 
-  char    trans[20] = "N";
+  char    trans[20] = "N"; // Use B without transposing it
   int     fac = n * m;
   integer workSize = fac * 2;
-  integer info;
-  float * work = new float[workSize];
+  integer info; // return code
+  float * work = new float[workSize]; // workspace
 
   integer lda = m;
   integer ldb = m;
 
-  sgels_(trans, &m, &n, &numRH, A, &lda, obj, &ldb, work, &workSize, &info); // From lapack: Solve G(eneral) Equations Linear System _
-  // A is modfied by sgels_
-  // obj contains the flattened coefs
+  sgels_(trans, &m, &n, &numRH, A, &lda, obj, &ldb, work, &workSize, &info); // 'integer' type needed for sgels_()
+/* From LAPACK: Solve G(eneral) Equations Linear System _  // http://www.netlib.org/lapack/single/sgels.f
+   Solve A.X = B
+   trans   = 'N' or 'T': Use B as is or transposed
+   m       = nb rows in A
+   n       = nb columns in A
+   numRH   = nb of Right Hand sides = nb of columns in B (only 1 here)
+   A       = real array of dim (lda, n) // A is modfied by sgels_
+   lda     = max(1,m)
+   obj = B = real array of dim (ldb,numRH)
+   On exit, B is overwritten by the solution vectors, stored columnwise:
+   rows 1 to n of B contain the least squares solution vectors //  ==> obj contains the flattened coefs
+   ldb     = max(1,m,n)
+   work    = workspace
+   workSize= size of work
+   info    = return code (0, >0 or <0)
+*/
 
   delete work; // new done in ComputeCoeffs()
   work = NULL;
@@ -459,29 +473,33 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
   // Compute Sherical Harmonics coefficients
   ODFType* ODFSampledImageArray = ODFSampledImage->GetPixelContainer()->GetBufferPointer();
 
-  // Compute basis matrix A: TO BE DONE ONLY ONCE FOR ALL VOXELS (depends only on the odf vertices)
+  // Compute basis matrix A: TO BE DONE ONLY ONCE FOR ALL VOXELS (depends ONLY on the odf vertices)
   float * A;
   int NbVertices;
   int NbCoeffs;
-  // Compute basis matrix A
-  Get_BaseVal( A, NbVertices, NbCoeffs ); // will set A, m_int, n_int (reference &)
+  // Compute basis matrix A: depends on vertices ONLY
+  Get_BaseVal( A, NbVertices, NbCoeffs ); // will set A, NbVertices, NbCoeffs (reference &)
 
   // for all voxels in the image
   int percent=0;
   for( unsigned long VoxelIndex = 0 ; VoxelIndex < size[0]*size[1]*size[2] ; VoxelIndex++ )
   {
-    if( VoxelIndex % (size[0]*size[1]*size[2]/10) == 0 ) // display every 10%
+    // display every 10%
+    if( VoxelIndex % (size[0]*size[1]*size[2]/10) == 0 ) // does not work if nbVoxels < 10 (OK for 3D images)
     {
       std::cout<< percent << "%" <<std::endl;
       percent += 10;
     }
 
-    ODFType *SpharmCoeffs = ComputeCoeffs( ODFSampledImageArray, VoxelIndex, A, NbVertices, NbCoeffs );
+    ODFType *SpharmCoeffs = ComputeCoeffs( ODFSampledImageArray, VoxelIndex, A, NbVertices, NbCoeffs ); // first 25 values of array are results = sph. harm. coeffs
 
     for( unsigned int coeff=0; coeff < NBCOEFFS ; ++coeff ) // for all coeffs
     {
       NewODFCoeffsImageArray[ VoxelIndex*NBCOEFFS + coeff ] = SpharmCoeffs[ coeff ];
     } // for all coeffs
+
+    delete [] SpharmCoeffs; // new done in ComputeCoeffs(): float * obj = new float[]; ... return obj;
+
   } // for all voxels in the image
   std::cout<< "100%" <<std::endl;
 

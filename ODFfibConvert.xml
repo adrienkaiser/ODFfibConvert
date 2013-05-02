@@ -10,26 +10,30 @@
     <image>
       <name>ODFitk</name>
       <longflag>ODFitk</longflag>
-      <description>ODF image in itk format (.nrrd, .nii, .nii.gz). A mask and a FA image are required to convert ITK image to fib file.</description>
+      <description>ODF image in itk format (.nrrd, .nii, .nii.gz) containing either the spherical harmonics coefficients of the ODF (15 components) or the ODF samples (321 components). A mask and a FA image are required to convert ITK image to fib file.</description>
       <label>ODF itk Image</label>
+      <channel>input</channel>
     </image>
     <image>
       <name>ODFfib</name>
       <longflag>ODFfib</longflag>
       <description>ODF image in fib format (.fib, .fib.gz)</description>
       <label>ODF fib Image</label>
+      <channel>input</channel>
     </image>
     <image>
       <name>mask</name>
       <longflag>mask</longflag>
       <description>Mask image to apply to the ODF in itk format (.nrrd, .nii, .nii.gz)</description>
       <label>Mask Image</label>
+      <channel>input</channel>
     </image>
     <image>
       <name>fa</name>
       <longflag>fa</longflag>
       <description>FA image in itk format (.nrrd, .nii, .nii.gz)</description>
       <label>FA Image</label>
+      <channel>input</channel>
     </image>
   </parameters>
   <parameters>
@@ -40,6 +44,14 @@
       <longflag>outputODF</longflag>
       <description>Output ODF image in ITK or fib format</description>
       <label>Output ODF image</label>
+      <channel>output</channel>
+    </image>
+    <image>
+      <name>outputSampledODF</name>
+      <longflag>outputSampledODF</longflag>
+      <description>Write output 321 ODF samples in an image in ITK format (.nrrd, .nii, .nii.gz)</description>
+      <label>Output ODF samples image</label>
+      <channel>output</channel>
     </image>
   </parameters>
 </executable>
