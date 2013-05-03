@@ -312,6 +312,7 @@ int Get_BaseVal( float * & A, int & nvert, int & degree )
     vert[3 * i + 0] = xVert;
     vert[3 * i + 1] = yVert;
     vert[3 * i + 2] = zVert;
+
     i++;
   }
 
@@ -451,9 +452,6 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
   origin[1] = 0;
   origin[2] = 0;
   NewODFCoeffsImage->SetOrigin ( origin ) ;
-  // direction
-//  ImageType::DirectionType direction;
-//  ODFCoeffsImage->SetDirection ( direction ) ;
   // region (size)
   ODFImageType::IndexType start;
   start[0] = 0;
@@ -471,7 +469,6 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
   NewODFCoeffsImageArray = NewODFCoeffsImage->GetPixelContainer()->GetBufferPointer() ;
 
   // Compute Sherical Harmonics coefficients
-  ODFType* ODFSampledImageArray = ODFSampledImage->GetPixelContainer()->GetBufferPointer();
 
   // Compute basis matrix A: TO BE DONE ONLY ONCE FOR ALL VOXELS (depends ONLY on the odf vertices)
   float * A;
@@ -479,6 +476,8 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
   int NbCoeffs;
   // Compute basis matrix A: depends on vertices ONLY
   Get_BaseVal( A, NbVertices, NbCoeffs ); // will set A, NbVertices, NbCoeffs (reference &)
+
+  ODFType* ODFSampledImageArray = ODFSampledImage->GetPixelContainer()->GetBufferPointer();
 
   // for all voxels in the image
   int percent=0;
@@ -491,7 +490,17 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
       percent += 10;
     }
 
-    ODFType *SpharmCoeffs = ComputeCoeffs( ODFSampledImageArray, VoxelIndex, A, NbVertices, NbCoeffs ); // first 25 values of array are results = sph. harm. coeffs
+    // create a new copy of A as it has been modified by sgels_()
+    float * Acopy = new float[ NbVertices * NbCoeffs ];
+    for( unsigned int Aindex=0 ; Aindex < NbVertices*NbCoeffs ; Aindex++ )
+    {
+      Acopy[ Aindex ] = A[ Aindex ];
+    }
+
+    ODFType *SpharmCoeffs = ComputeCoeffs( ODFSampledImageArray, VoxelIndex, Acopy, NbVertices, NbCoeffs ); // first 25 values of array are results = sph. harm. coeffs
+
+    delete [] Acopy;
+    Acopy = NULL;
 
     for( unsigned int coeff=0; coeff < NBCOEFFS ; ++coeff ) // for all coeffs
     {
@@ -499,6 +508,7 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
     } // for all coeffs
 
     delete [] SpharmCoeffs; // new done in ComputeCoeffs(): float * obj = new float[]; ... return obj;
+    SpharmCoeffs = NULL;
 
   } // for all voxels in the image
   std::cout<< "100%" <<std::endl;

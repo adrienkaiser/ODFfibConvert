@@ -11,10 +11,10 @@ USAGE:
 
    ./ODFfibConvert  [--returnparameterfile <std::string>]
                     [--processinformationaddress <std::string>] [--xml]
-                    [--echo] [--outputODF <std::string>] [--fa
-                    <std::string>] [--mask <std::string>] [--ODFfib
-                    <std::string>] [--ODFitk <std::string>] [--]
-                    [--version] [-h]
+                    [--echo] [--outputSampledODF <std::string>]
+                    [--outputODF <std::string>] [--fa <std::string>]
+                    [--mask <std::string>] [--ODFfib <std::string>]
+                    [--ODFitk <std::string>] [--] [--version] [-h]
 
 
 Where: 
@@ -34,6 +34,10 @@ Where:
    --echo
      Echo the command line arguments (default: 0)
 
+   --outputSampledODF <std::string>
+     Write output 321 ODF samples in an image in ITK format (.nrrd, .nii,
+     .nii.gz)
+
    --outputODF <std::string>
      Output ODF image in ITK or fib format
 
@@ -47,8 +51,10 @@ Where:
      ODF image in fib format (.fib, .fib.gz)
 
    --ODFitk <std::string>
-     ODF image in itk format (.nrrd, .nii, .nii.gz). A mask and a FA image
-     are required to convert ITK image to fib file.
+     ODF image in itk format (.nrrd, .nii, .nii.gz) containing either the
+     spherical harmonics coefficients of the ODF (15 components) or the ODF
+     samples (321 components). A mask and a FA image are required to
+     convert ITK image to fib file.
 
    --,  --ignore_rest
      Ignores the rest of the labeled arguments following this flag.

@@ -431,6 +431,7 @@ template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string fi
 ODFImageType::Pointer AssembleODFBlocks( std::vector< ODFType* > ODFBlocks,
                                          std::vector< unsigned int > BlockSizes,
                                          std::string filename,
+                                         std::string outputSampledODF,
                                          itk::ImageBase< 3 >::SizeType size,
                                          itk::ImageBase< 3 >::SpacingType spacing,
                                          double* fa,
@@ -521,14 +522,17 @@ voxel      E [0 ; 999999] -> Voxelindex
   } // for all voxels in the image
   std::cout<< "100%" <<std::endl;
 
-  // Write out image
-//  WriteOutITKODFImage( NewODFSampledImage, filename );
+  // Write out sampled ODF image
+  if( outputSampledODF != "" )
+  {
+    WriteOutITKODFImage( NewODFSampledImage, filename );
+  }
 
   return NewODFSampledImage; // NewODFSampledImage has 321 components
 }
 
 /// Master Function
-ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK ) // returns the assembled sampled ODF ITK image
+ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK, std::string outputSampledODF ) // returns the assembled sampled ODF ITK image
 {
   std::cout<<"Status : Reading fib file: " << filename << std::endl;
 
@@ -604,7 +608,7 @@ ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK )
       std::cout<< row << " " << col << " " << MatrixName <<std::endl;
     }
   }
-  ODFImageType::Pointer NewODFSampledImage = AssembleODFBlocks( ODFBlocks, BlockSizes, outputODFITK, size, spacing, fa, MaskArray ); // FA needed for masking
+  ODFImageType::Pointer NewODFSampledImage = AssembleODFBlocks( ODFBlocks, BlockSizes, outputODFITK, outputSampledODF, size, spacing, fa, MaskArray ); // FA needed for masking
   if( ! NewODFSampledImage )
   {
     return NULL;
@@ -666,7 +670,7 @@ int main (int argc, char* argv[])
 /* Convert image */
   if( ODFfib != "" ) // fib -> ITK
   {
-    ODFImageType::Pointer NewODFSampledImage = writeITK( ODFfib, outputODF ); // keep the samples so we can reconstruct sph harm. from it afterwards
+    ODFImageType::Pointer NewODFSampledImage = writeITK( ODFfib, outputODF, outputSampledODF ); // keep the samples so we can reconstruct sph harm. from it afterwards
 
     if( ! NewODFSampledImage )
     {
@@ -676,8 +680,6 @@ int main (int argc, char* argv[])
   }
   else // ITK -> fib
   {
-    std::string outputSampledODF = itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODF).c_str() ) + "/ODFsampled.nrrd"; // "";
-
     ODFImageType::Pointer ODFSampledImage = loadITK( ODFitk, outputSampledODF );
 
     if( ! ODFSampledImage )
