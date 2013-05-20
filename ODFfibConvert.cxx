@@ -1,5 +1,5 @@
 /*
-./ODFfibConvert --ODFfib /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/dwi-00.src.gz.odf8.f5rec.qbi.sh8.0.006.fib.gz
+./ODFfibConvert --ODFfib /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/dwi-00.src.gz.odf8.f5rec.qbi.sh8.0.006.fib.gz --outputSampledODF ./ODFsampled.nrrd
 ./ODFfibConvert --ODFitk /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/odf.nrrd --mask /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/maskDSI.nii.gz --fa /home/akaiser/Networking/NFG/nfg_1.1.1/generated_collections/130325112527/DWI/fa.nrrd --outputSampledODF ./ODFsampled.nrrd
 */
 
@@ -29,7 +29,7 @@
 
 // ODFSpharmComputer.cxx
 void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
-                          std::string filename,
+                          std::string OutputODFCoeffs,
                           itk::ImageBase< 3 >::SizeType size,
                           itk::ImageBase< 3 >::SpacingType spacing);
 
@@ -37,13 +37,13 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
  //              COMMON                 //
 /////////////////////////////////////////
 
-void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string filename )
+void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string OutputODFImageFile )
 {
-  std::cout<<"Status : Writing out ITK ODF image: " << filename << " ... ";
+  std::cout<<"Status : Writing out ITK ODF image: " << OutputODFImageFile << " ... ";
 
   typedef itk::ImageFileWriter < ODFImageType > ODFWriterType ;
   ODFWriterType::Pointer Writer = ODFWriterType::New() ;
-  Writer->SetFileName ( filename ); 
+  Writer->SetFileName ( OutputODFImageFile ); 
   Writer->SetInput( ODFImage );
   Writer->SetUseCompression(true);
 
@@ -53,7 +53,7 @@ void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string filename )
   }
   catch ( itk::ExceptionObject & excp )
   {
-    std::cerr << "Problem writing the image: " << filename << std::endl ;
+    std::cerr << "Problem writing the image: " << OutputODFImageFile << std::endl ;
     std::cerr << excp << std::endl ;
   }
 
@@ -66,9 +66,9 @@ void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string filename )
  //            ITK -> FIB               //
 /////////////////////////////////////////
 
-template< class T > T* GetArrayFromFile( std::string filename, bool SkipFirstLine ) // SkipFirstLine needed for vertices file ( = datFile -> first line = nb of vertices)
+template< class T > T* GetArrayFromFile( std::string ArrayFile, bool SkipFirstLine ) // SkipFirstLine needed for vertices file ( = datFile -> first line = nb of vertices)
 {
-  std::ifstream InfileStream (filename.c_str() , std::ios::in); // open in reading
+  std::ifstream InfileStream (ArrayFile.c_str() , std::ios::in); // open in reading
   if(! InfileStream) // error while opening
   {
     return NULL;
@@ -112,21 +112,21 @@ template< class T > T* GetArrayFromFile( std::string filename, bool SkipFirstLin
   return data;
 }
 
-ODFImageType::Pointer loadITK(std::string filename, std::string outputSampledODF ) // returns the sampled ODF image
+ODFImageType::Pointer loadITKODF(std::string ODFITKImageFile, std::string outputSampledODF ) // returns the sampled ODF image
 {
   typedef itk::ImageFileReader< ODFImageType >  ODFReaderType;
   ODFReaderType::Pointer ODFReader       = ODFReaderType::New();
   ODFImageType::Pointer  ODFCoeffsImage  = ODFImageType::New();
 
-  std::cout<<"Status : Loading ODF ITK image: "<<filename<<" ... ";
-  ODFReader->SetFileName ( filename ) ;
+  std::cout<<"Status : Loading ODF ITK image: "<< ODFITKImageFile <<" ... ";
+  ODFReader->SetFileName ( ODFITKImageFile ) ;
   try
   {
     ODFReader->Update() ; 
   }
   catch( itk::ExceptionObject & excp )
   {
-    std::cout << "FAIL" << std::endl << "Error  : Problem reading the input ODF file: " << filename <<  std::endl;
+    std::cout << "FAIL" << std::endl << "Error  : Problem reading the input ODF file: " << ODFITKImageFile <<  std::endl;
     std::cout << excp << std::endl;
     return NULL;
   }
@@ -146,6 +146,8 @@ ODFImageType::Pointer loadITK(std::string filename, std::string outputSampledODF
       WriteOutITKODFImage( ODFSampledImage, outputSampledODF );
     }
 
+//  ComputeSpharmCoeffs( ODFSampledImage, "/home/akaiser/work/Projects/ODFfibConvert-build/ODFcoeffsFromReconstructed2.nrrd", ODFSampledImage->GetLargestPossibleRegion().GetSize(), ODFSampledImage->GetSpacing() );
+
     return ODFSampledImage;
   }
   else if( ODFCoeffsImage->GetVectorLength() == 321 ) // ODF is given sampled with the right nb of vertices
@@ -158,7 +160,7 @@ ODFImageType::Pointer loadITK(std::string filename, std::string outputSampledODF
     return NULL;
   }
 
-} // loadITK()
+} // loadITKODF()
 
 template< class T > typename itk::Image< T, 3 >::Pointer loadScalarITKImage( std::string ScalarImageFilename )
 {
@@ -167,7 +169,7 @@ template< class T > typename itk::Image< T, 3 >::Pointer loadScalarITKImage( std
   typename ReaderType::Pointer Reader = ReaderType::New();
   typename ImageType::Pointer  Image  = ImageType::New();
 
-  std::cout<<"Status : Loading scalar ITK image: "<<ScalarImageFilename<<" ... ";
+  std::cout<<"Status : Loading scalar ITK image: "<< ScalarImageFilename <<" ... ";
 
   Reader->SetFileName ( ScalarImageFilename ) ;
   try
@@ -341,11 +343,11 @@ bool writeFib (ODFImageType::Pointer ODFSampledImage,
 /////////////////////////////////////////
 
 template<class T > void WriteITKScalarImage( T* data_ptr,
-                                             std::string filename,
+                                             std::string OutputITKScalar,
                                              typename itk::ImageBase< 3 >::SizeType size,
                                              typename itk::ImageBase< 3 >::SpacingType spacing )
 {
-  std::cout<<"Status : Writing out ITK scalar image: " << filename << " ... ";
+  std::cout<<"Status : Writing out ITK scalar image: " << OutputITKScalar << " ... ";
 
   // ITK types and definitions
   typedef itk::Image <T, 3>  ImageType ;
@@ -388,7 +390,7 @@ template<class T > void WriteITKScalarImage( T* data_ptr,
   // Write out image
   typedef itk::ImageFileWriter < ImageType > WriterType ;
   typename WriterType::Pointer Writer = WriterType::New() ;
-  Writer->SetFileName ( filename ); 
+  Writer->SetFileName ( OutputITKScalar ); 
   Writer->SetInput( NewImage );
   Writer->SetUseCompression(true);
 
@@ -398,7 +400,7 @@ template<class T > void WriteITKScalarImage( T* data_ptr,
   }
   catch ( itk::ExceptionObject & excp )
   {
-    std::cerr << "Problem writing the image: " << filename << std::endl ;
+    std::cerr << "Problem writing the image: " << OutputITKScalar << std::endl ;
     std::cerr << excp << std::endl ;
   }
 
@@ -407,14 +409,14 @@ template<class T > void WriteITKScalarImage( T* data_ptr,
   return;
 } // void WriteITKScalarImage()
 
-template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string filename ) // matrix dim = (3, nbVertices)
+template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string VerticesOutputFile ) // matrix dim = (3, nbVertices)
 {
-  std::cout<<"Status : Writing file: " << filename <<std::endl;
+  std::cout<<"Status : Writing file: " << VerticesOutputFile <<std::endl;
 
-  std::ofstream VerticesFileStream (filename.c_str() , std::ios::out | std::ios::trunc); // opening in writing with erasing the open file
+  std::ofstream VerticesFileStream (VerticesOutputFile.c_str() , std::ios::out | std::ios::trunc); // opening in writing with erasing the open file
   if(! VerticesFileStream)
   {
-    std::cout<<"Error : Creating file: "<< filename <<std::endl;
+    std::cout<<"Error : Creating file: "<< VerticesOutputFile <<std::endl;
     return;
   }
 
@@ -430,13 +432,14 @@ template<class T > void GetVertices( T* data_ptr, int nbVertices, std::string fi
 
 ODFImageType::Pointer AssembleODFBlocks( std::vector< ODFType* > ODFBlocks,
                                          std::vector< unsigned int > BlockSizes,
-                                         std::string filename,
                                          std::string outputSampledODF,
                                          itk::ImageBase< 3 >::SizeType size,
                                          itk::ImageBase< 3 >::SpacingType spacing,
                                          double* fa,
                                          short* MaskArray )
 {
+  std::cout<< "Status : Assembling ODF blocks to create ODF samples image"<< std::endl;
+
   // ITK types and definitions
   ODFImageType::Pointer NewODFSampledImage = ODFImageType::New() ;
 
@@ -525,21 +528,21 @@ voxel      E [0 ; 999999] -> Voxelindex
   // Write out sampled ODF image
   if( outputSampledODF != "" )
   {
-    WriteOutITKODFImage( NewODFSampledImage, filename );
+    WriteOutITKODFImage( NewODFSampledImage, outputSampledODF );
   }
 
   return NewODFSampledImage; // NewODFSampledImage has 321 components
 }
 
 /// Master Function
-ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK, std::string outputSampledODF ) // returns the assembled sampled ODF ITK image
+ODFImageType::Pointer writeITK( std::string ODFfib, std::string outputCoeffsODFITK, std::string outputSampledODF ) // returns the assembled sampled ODF ITK image
 {
-  std::cout<<"Status : Reading fib file: " << filename << std::endl;
+  std::cout<<"Status : Reading fib file: " << ODFfib << std::endl;
 
-  std::string outputFolder = itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputODFITK).c_str() );
+  std::string outputFolder = itksys::SystemTools::GetRealPath( itksys::SystemTools::GetFilenamePath(outputCoeffsODFITK).c_str() );
 
   MatFile mat_reader;
-  mat_reader.load_from_file( filename.c_str() );
+  mat_reader.load_from_file( ODFfib.c_str() );
   if( mat_reader.get_matrix_count() == 0)
   {
     std::cout<<"Error  : Fib file empty" << std::endl;
@@ -547,7 +550,6 @@ ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK, 
   }
 
   //// Get Data
-
   unsigned int row,col;
 
   // dim & spacing
@@ -608,14 +610,14 @@ ODFImageType::Pointer writeITK( std::string filename, std::string outputODFITK, 
       std::cout<< row << " " << col << " " << MatrixName <<std::endl;
     }
   }
-  ODFImageType::Pointer NewODFSampledImage = AssembleODFBlocks( ODFBlocks, BlockSizes, outputODFITK, outputSampledODF, size, spacing, fa, MaskArray ); // FA needed for masking
+  ODFImageType::Pointer NewODFSampledImage = AssembleODFBlocks( ODFBlocks, BlockSizes, outputSampledODF, size, spacing, fa, MaskArray ); // FA needed for masking
   if( ! NewODFSampledImage )
   {
     return NULL;
   }
 
   // Reconstruct sph. harm. from ODf samples
-  ComputeSpharmCoeffs( NewODFSampledImage, outputFolder + "/ODFcoeffs.nrrd", size, spacing ); // NewODFSampledImage has 321 components
+  ComputeSpharmCoeffs( NewODFSampledImage, outputCoeffsODFITK, size, spacing ); // NewODFSampledImage has 321 components
 
   return NewODFSampledImage;
 
@@ -658,7 +660,7 @@ int main (int argc, char* argv[])
   {
     if( ODFfib != "" )
     {
-      outputODF = "./ODF.nrrd";
+      outputODF = "./ODFcoeffs.nrrd";
     }
     else
     {
@@ -670,7 +672,7 @@ int main (int argc, char* argv[])
 /* Convert image */
   if( ODFfib != "" ) // fib -> ITK
   {
-    ODFImageType::Pointer NewODFSampledImage = writeITK( ODFfib, outputODF, outputSampledODF ); // keep the samples so we can reconstruct sph harm. from it afterwards
+    ODFImageType::Pointer NewODFSampledImage = writeITK( ODFfib, outputODF, outputSampledODF );
 
     if( ! NewODFSampledImage )
     {
@@ -680,7 +682,7 @@ int main (int argc, char* argv[])
   }
   else // ITK -> fib
   {
-    ODFImageType::Pointer ODFSampledImage = loadITK( ODFitk, outputSampledODF );
+    ODFImageType::Pointer ODFSampledImage = loadITKODF( ODFitk, outputSampledODF );
 
     if( ! ODFSampledImage )
     {

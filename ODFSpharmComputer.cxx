@@ -21,7 +21,7 @@ int sgels_(char *trans, integer *m, integer *n, integer *
 
 #include "define.h" // types and constant definitions
 
-void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string filename ); // in ODFfibConvert.cxx
+void WriteOutITKODFImage( ODFImageType::Pointer ODFImage, std::string OutputODFImageFile ); // in ODFfibConvert.cxx
 
 // spharm-pdm/Libraries/Shape/Algorithms/ParametricMeshToSPHARMSpatialObjectFilter.cxx: 999:  void ParametricMeshToSPHARMSpatialObjectFilter::ComputeCoeffs()
 // called in                             ParametricMeshToSPHARMSpatialObjectFilter.cxx: 1233: void ParametricMeshToSPHARMSpatialObjectFilter::GenerateData()
@@ -301,7 +301,7 @@ int Get_BaseVal( float * & A, int & nvert, int & degree )
 
   std::getline( InfileStream, line ); // void read to avoid reading the first line as point
 
-  nvert = NBDIRS;
+  nvert = NBDIRS; // 321
   double * vert = new double[nvert * 3];
   int i=0;
   while( std::getline( InfileStream, line ) && i<nvert ) 
@@ -322,7 +322,7 @@ int Get_BaseVal( float * & A, int & nvert, int & degree )
 
   double re, im, z;
 
-  unsigned int m_Degree = SPHARMDEGREE;
+  unsigned int m_Degree = SPHARMDEGREE; // 4
   ParametricMeshToSPHARMSpatialObjectFilterLegendre * m_leg;
 
   if( m_leg )
@@ -331,32 +331,52 @@ int Get_BaseVal( float * & A, int & nvert, int & degree )
     }
   m_leg = new ParametricMeshToSPHARMSpatialObjectFilterLegendre(m_Degree);
 
-  double * plm = new double[(m_Degree + 1) * (m_Degree + 1) * 3];
+  double * plm = new double[(m_Degree + 1) * (m_Degree + 1) * 3]; // 25 * 3
 
-  degree = m_leg->L + 1;
-  degree *= degree; // fuer re und im
+//  degree = m_leg->L + 1;
+//  degree *= degree; // fuer re und im
+  degree = NBCOEFFS; // 15
   A = new float[degree * nvert];
+  // for all vertices nvert = NBDIRS = 321
   for( int ind = 0, i = 0; i < nvert; i++, ind += 3 )
-    {
+  {
     z = vert[ind + 2];
 
-    plgndr_row(m_leg->L, 0, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), plm);
-    for( int l = 0; l <= m_leg->L; l++ )
-      {
-      A[i + l * l * nvert] = m_leg->a[l * (l + 1) / 2] * plm[l];      // assign Y_l^0
-      }
-    plgndr_row(m_leg->L, 1, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), plm);
+    // void plgndr_row(const int l, const int m, const double x, const double somx2, double *p_ptr) // somx2=sqrt((1.0-x)*(1.0+x));
+    // Tabelliert P_m^m, P_{m+1}^m, ... P_l^m  in  p_ptr[0]... p_ptr[l-m].
+    // Das heisst p_ptr[ll-m] = P_ll^m,   fuer m <= ll <= l.
 
+    // Ylm: Remove odd coefficients: l=1, l=3: keep l = 0, 2, 4
+    unsigned int Lindextable[3] = { 0, 1, 6 };
+
+    // Yl0
+    plgndr_row(m_leg->L, 0, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), plm);
+    // m_leg->L = m_Degree = SPHARMDEGREE = 4
+//    for( int l = 0; l <= m_leg->L; l++ )
+    for( int l = 0; l <= m_leg->L; l+=2 ) // l = 0, 2, 4
+    {
+//      A[i + l * l * nvert] = m_leg->a[l * (l + 1) / 2] * plm[l];      // assign Y_l^0
+      A[i + Lindextable[l/2] * nvert] = m_leg->a[l * (l + 1) / 2] * plm[l];      // assign Y_l^0
+    }
+
+    // Yl1 Yl-1
+    plgndr_row(m_leg->L, 1, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), plm);
     im = sin(atan2(vert[ind + 1], vert[ind]) );
     re = cos(atan2(vert[ind + 1], vert[ind]) );
-    for( int l = 1; l <= m_leg->L; l++ )
-      {
-      int j = l * l + 1;
+    // m_leg->L = m_Degree = SPHARMDEGREE = 4
+//    for( int l = 1; l <= m_leg->L; l++ )
+    for( int l = 2; l <= m_leg->L; l+=2 ) // l = 2, 4
+    {
+//      int j = l * l + 1;
+      int j = Lindextable[l/2] + 1;
       A[i + j * nvert] = m_leg->a[l * (l + 1) / 2 + 1] * plm[l - 1] * re;
       A[i + j * nvert + nvert] = m_leg->a[l * (l + 1) / 2 + 1] * plm[l - 1] * im;
-      }
+    }
+
+    // Yl2 Yl-2 .. YlL Yl-L
+    // m_leg->L = m_Degree = SPHARMDEGREE = 4
     for( int m = 2; m <= m_leg->L; m++ )
-      {
+    {
       im = sin(m * atan2(vert[ind + 1], vert[ind]) );
       re = cos(m * atan2(vert[ind + 1], vert[ind]) );
       // double p= (1.0-z)*(1.0+z);
@@ -364,14 +384,19 @@ int Get_BaseVal( float * & A, int & nvert, int & degree )
       // if (p<1e-20) p= 0; else p= 1/p;
       // re*= p; im*= p;
       plgndr_row(m_leg->L, m, z, sqrt( (double) (1.0 - z) * (1.0 + z) ), plm);
+      // m_leg->L = m_Degree = SPHARMDEGREE = 4
       for( int l = m; l <= m_leg->L; l++ )
+      {
+        if( l%2 == 0 ) // if l is even: OK
         {
-        int j = l * l + m + m - 1;
-        A[i + j * nvert] = m_leg->a[l * (l + 1) / 2 + m] * plm[l - m] * re;
-        A[i + j * nvert + nvert] = m_leg->a[l * (l + 1) / 2 + m] * plm[l - m] * im;
-        }
+//        int j = l * l + m + m - 1;
+          int j = Lindextable[l/2] + m + m - 1;
+          A[i + j * nvert] = m_leg->a[l * (l + 1) / 2 + m] * plm[l - m] * re;
+          A[i + j * nvert + nvert] = m_leg->a[l * (l + 1) / 2 + m] * plm[l - m] * im;
+        } // if l is even
       }
     }
+  }
 
   delete plm;
   delete vert;
@@ -379,9 +404,52 @@ int Get_BaseVal( float * & A, int & nvert, int & degree )
   return 0;
 }
 
+// Homemade
+ODFType *OrderCoeffs (float* obj)
+{
+/*
+obj: 25 coeffs
+0    1   2   3   4    5   6    7   8    9   10  11   12  13   14  15  16  17  18   19   20   21  22  23  24
+C00 C10 C11 C1-1 C20 C21 C2-1 C22 C2-2 C30 C31 C3-1 C32 C3-2 C33 C3-3 C40 C41 C4-1 C42 C4-2 C43 C4-3 C44 C4-4
+-> spharm-pdm/Libraries/Shape/Numerics/SphericalHarmonicsPolynomial.txx:56:Evaluate()
+
+Updated:
+obj: 15 coeffs
+0    1   2   3   4    5   6    7   8    9   10  11   12  13   14
+C00 C20 C21 C2-1 C22 C2-2 C40 C41 C4-1 C42 C4-2 C43 C4-3 C44 C4-4
+    ||
+    VV
+coeffsOrdered: 15 coeffs (no odd orders/degrees) (same order as in cost)
+0     1    2   3  4    5   6   7     8    9   10   11  12  13  14
+C00 C2-2 C2-1 C20 C21 C22 C4-4 C4-3 C4-2 C4-1 C40 C41 C42 C43 C44
+-> COST/ODFReconstructor.cxx:136:Y()
+                            :174:GetLM()
+*/
+
+  ODFType *coeffsOrdered = new ODFType[NBCOEFFS];
+
+  coeffsOrdered[  0 ] = obj[  0 ]; //  0 ];
+  coeffsOrdered[  1 ] = obj[  5 ]; //  8 ];
+  coeffsOrdered[  2 ] = obj[  3 ]; //  6 ];
+  coeffsOrdered[  3 ] = obj[  1 ]; //  4 ];
+  coeffsOrdered[  4 ] = obj[  2 ]; //  5 ];
+  coeffsOrdered[  5 ] = obj[  4 ]; //  7 ];
+  coeffsOrdered[  6 ] = obj[ 14 ]; // 24 ];
+  coeffsOrdered[  7 ] = obj[ 12 ]; // 22 ];
+  coeffsOrdered[  8 ] = obj[ 10 ]; // 20 ];
+  coeffsOrdered[  9 ] = obj[  8 ]; // 18 ];
+  coeffsOrdered[ 10 ] = obj[  6 ]; // 16 ];
+  coeffsOrdered[ 11 ] = obj[  7 ]; // 17 ];
+  coeffsOrdered[ 12 ] = obj[  9 ]; // 19 ];
+  coeffsOrdered[ 13 ] = obj[ 11 ]; // 21 ];
+  coeffsOrdered[ 14 ] = obj[ 13 ]; // 23 ];
+
+  return coeffsOrdered;
+}
+
 // Modified
 // Compute all 25 coeffs for 1 voxel only
-float *ComputeCoeffs( ODFType* ODFSampledImageArray, unsigned long VoxelIndex, float * A, int m_int, int n_int )
+ODFType *ComputeCoeffs( ODFType* ODFSampledImageArray, unsigned long VoxelIndex, float * A, int m_int, int n_int )
 {
 /* Solving system A.X = B
 A = basis matrix depending on the vertices only (computed once at the beginning)  321 rows x 25 cols
@@ -430,17 +498,22 @@ B = ODF values only  321 rows x 1col
   delete work; // new done in ComputeCoeffs()
   work = NULL;
 
-  return obj;
+  ODFType *coeffsOrdered = OrderCoeffs(obj);
+
+  delete [] obj;
+  obj = NULL;
+  
+  return coeffsOrdered;
 }
 
 // Used with forward declaration using function prototype in ODFfibConvert.cxx
 // Compute coeffs for all voxels and write out image
 void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
-                          std::string filename,
+                          std::string OutputODFCoeffs,
                           itk::ImageBase< 3 >::SizeType size,
                           itk::ImageBase< 3 >::SpacingType spacing)
 {
-  std::cout<< "Status : Computing Spherical Harmonics Coefficients"<< std::endl;
+  std::cout<< "Status : Computing Spherical Harmonics Coefficients from ODF samples"<< std::endl;
 
   //// Set Image properties
   ODFImageType::Pointer NewODFCoeffsImage = ODFImageType::New();
@@ -507,7 +580,7 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
       NewODFCoeffsImageArray[ VoxelIndex*NBCOEFFS + coeff ] = SpharmCoeffs[ coeff ];
     } // for all coeffs
 
-    delete [] SpharmCoeffs; // new done in ComputeCoeffs(): float * obj = new float[]; ... return obj;
+    delete [] SpharmCoeffs; // new done in OrderCoeffs(): ODFType *coeffsOrdered = new ODFType[]; ... return coeffsOrdered;
     SpharmCoeffs = NULL;
 
   } // for all voxels in the image
@@ -517,7 +590,7 @@ void ComputeSpharmCoeffs( ODFImageType::Pointer ODFSampledImage,
   A = NULL;
 
   // write out coeffs image
-  WriteOutITKODFImage( NewODFCoeffsImage, filename );
+  WriteOutITKODFImage( NewODFCoeffsImage, OutputODFCoeffs );
 
   return ;
 }
